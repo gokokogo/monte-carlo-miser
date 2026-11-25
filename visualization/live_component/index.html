@@ -45,133 +45,930 @@
   </div>
 </div>
 <script>
-function send(type,data){window.parent.postMessage(Object.assign({isStreamlitMessage:true,type},data||{}),"*");}
-function setHeight(){send("streamlit:setFrameHeight",{height:document.body.scrollHeight+6});}
-const C={mc:"#1f77b4",ms:"#ff7f0e",overlay:"#202020",current:"#c2410c"};
-const BINARY={mc:"rgba(31,119,180,0.78)",ms:"rgba(255,127,14,0.82)",zero:"rgba(148,163,184,0.48)"};
-let D=null,S=null,rafId=null,PM=null,PS=null;
-const $=id=>document.getElementById(id);
-const fmtInt=x=>Math.round(x).toLocaleString("en-US");
-const fmt=(x,d=6)=>Number.isFinite(x)?Number(x).toFixed(d):"—";
-const LAYOUT=()=>({margin:{l:40,r:10,t:8,b:36},showlegend:false,dragmode:false,
- xaxis:{range:[0,1],title:{text:"X",standoff:4},zeroline:false,fixedrange:true,constrain:"domain",dtick:.2},
- yaxis:{range:[0,1],title:{text:"Y",standoff:4},zeroline:false,fixedrange:true,scaleanchor:"x",constrain:"domain",dtick:.2},
- plot_bgcolor:"#fff",paper_bgcolor:"rgba(0,0,0,0)"});
-const CFG={displayModeBar:false,responsive:true};
-function makePanel(key){
- const wrap=$(key+"-wrap");wrap.querySelectorAll("canvas").forEach(c=>c.remove());
- const layers={};for(const name of ["splits","points","top"]){const c=document.createElement("canvas");c.className="layer";wrap.appendChild(c);layers[name]=c;}
- return {key,gd:$(key+"-plot"),layers,map:null,painted:0};
+function send(type,data){
+  window.parent.postMessage(
+    Object.assign({isStreamlitMessage:true,type},data||{}),
+    "*"
+  );
 }
-function fitPanel(P){
- const xa=P.gd._fullLayout.xaxis,ya=P.gd._fullLayout.yaxis,dpr=window.devicePixelRatio||1,W=P.gd.clientWidth,H=P.gd.clientHeight;
- for(const c of Object.values(P.layers)){c.width=Math.round(W*dpr);c.height=Math.round(H*dpr);c.style.width=W+"px";c.style.height=H+"px";
-  const ctx=c.getContext("2d");ctx.setTransform(dpr,0,0,dpr,0,0);ctx.beginPath();ctx.rect(xa._offset,ya._offset,xa._length,ya._length);ctx.clip();}
- P.map={px:x=>xa._offset+x*xa._length,py:y=>ya._offset+(1-y)*ya._length,scale:xa._length};P.painted=0;
-}
-function clearLayer(c){const ctx=c.getContext("2d");ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,c.width,c.height);ctx.restore();}
-function dot(ctx,x,y,r){ctx.moveTo(x+r,y);ctx.arc(x,y,r,0,6.2832);}
-function valueColor(t,key){
- // Continuous-value palette: deep blue -> cyan -> yellow -> red.
- const hue=240*(1-Math.max(0,Math.min(1,t)));
- return `hsla(${hue},82%,48%,0.82)`;
-}
-function paintPoints(P,src,from,to){
- if(to<=from)return;P.painted+=to-from;const ctx=P.layers.points.getContext("2d"),m=P.map;
- const r=Math.max(1.25,Math.min(2.15,9000/Math.max(D.n,1)));
- if(D.binary){
-  ctx.fillStyle=BINARY.zero;ctx.beginPath();for(let i=from;i<to;i++)if(src.v[i]<0.5)dot(ctx,m.px(src.x[i]),m.py(src.y[i]),r);ctx.fill();
-  ctx.fillStyle=BINARY[P.key];ctx.beginPath();for(let i=from;i<to;i++)if(src.v[i]>=0.5)dot(ctx,m.px(src.x[i]),m.py(src.y[i]),r);ctx.fill();
- }else{
-  const lo=src.value_min,hi=src.value_max,range=(hi-lo)||1,bins=14,groups=Array.from({length:bins},()=>[]);
-  for(let i=from;i<to;i++){const b=Math.min(bins-1,Math.max(0,Math.floor((src.v[i]-lo)/range*bins)));groups[b].push(i);}
-  for(let b=0;b<bins;b++){if(!groups[b].length)continue;ctx.fillStyle=valueColor((b+.5)/bins,P.key);ctx.beginPath();
-   for(const i of groups[b])dot(ctx,m.px(src.x[i]),m.py(src.y[i]),r);ctx.fill();}
- }
-}
-function paintSplits(from,to){
- const ctx=PS.layers.splits.getContext("2d"),m=PS.map;
- for(let i=from;i<to;i++){const s=D.ms.splits[i],depth=s[5];ctx.strokeStyle=`rgba(160,82,45,${Math.max(.18,.6-.06*depth)})`;ctx.lineWidth=depth<2?1.2:.8;
-  ctx.beginPath();ctx.moveTo(m.px(s[1]),m.py(s[2]));ctx.lineTo(m.px(s[3]),m.py(s[4]));ctx.stroke();}
-}
-function paintTop(P){
- const c=P.layers.top,ctx=c.getContext("2d"),m=P.map;clearLayer(c);
- if(D.overlay&&D.overlay.length>=3){const [cx,cy,r]=D.overlay;ctx.strokeStyle=C.overlay;ctx.lineWidth=1.8;ctx.setLineDash(D.binary?[]:[5,4]);ctx.beginPath();ctx.arc(m.px(cx),m.py(cy),Math.abs(r)*m.scale,0,6.2832);ctx.stroke();ctx.setLineDash([]);}
- if(P.key==="ms"&&S&&S.curLeaf>=0){const l=D.ms.leaves[S.curLeaf];ctx.strokeStyle=C.current;ctx.lineWidth=1.4;ctx.setLineDash([4,3]);
-  ctx.strokeRect(m.px(l[3]),m.py(l[6]),m.px(l[4])-m.px(l[3]),m.py(l[5])-m.py(l[6]));ctx.setLineDash([]);}
-}
-function legendFor(key){
- const item=(cls,color,label)=>`<span><i class="${cls}" style="${cls==="dot"?"background":"border-top-color"}:${color}"></i>${label}</span>`;
- if(D.binary)return item("dot",BINARY[key], "f = 1") + item("dot",BINARY.zero,"f = 0") +
-  (D.overlay?item("line",C.overlay,"Boundary"):"") +
-  (key==="ms"?item("line","rgba(160,82,45,.6)","MISER split") + item("line",C.current,"Current region"):"");
- return item("dot","#244bd6","Lower value") + item("dot","#e3c52a","Mid value") + item("dot","#d62728","Higher value") +
-  (D.overlay?item("line",C.overlay,"Reference guide"):"") +
-  (key==="ms"?item("line","rgba(160,82,45,.6)","MISER split") + item("line",C.current,"Current region"):"");
-}
-function legends(){$("mc-legend").innerHTML=legendFor("mc");$("ms-legend").innerHTML=legendFor("ms");}
-function freshState(){return {shown:0,progress:0,lastTs:null,done:false,playing:false,reported:false,mcSum:0,msSum:0,mcOnes:0,msOnes:0,
- leafPtr:0,curLeaf:-1,curSum:0,curCount:0,curArea:0,doneSum:0,doneArea:0,leavesDone:0,splitPtr:0,nodePtr:0,depth:0,maxDepth:0};}
-function finishLeaf(){const l=D.ms.leaves[S.curLeaf];S.doneSum+=l[8];S.doneArea+=l[2];S.leavesDone++;S.curLeaf=-1;S.curSum=0;S.curCount=0;S.curArea=0;}
-function advance(to){
- const from=S.shown;if(to<=from)return;const mc=D.mc,ms=D.ms,L=ms.leaves;
- for(let i=from;i<to;i++){S.mcSum+=mc.v[i];S.msSum+=ms.v[i];if(mc.v[i]>=.5)S.mcOnes++;if(ms.v[i]>=.5)S.msOnes++;}
- paintPoints(PM,mc,from,to);
- let topDirty=false;
- for(let i=from;i<to;i++){
-  if(S.curLeaf>=0&&i>=L[S.curLeaf][0]+L[S.curLeaf][1]){finishLeaf();topDirty=true;}
-  if(S.leafPtr<L.length&&i>=L[S.leafPtr][0]){S.curLeaf=S.leafPtr++;S.curSum=0;S.curCount=0;S.curArea=L[S.curLeaf][2];topDirty=true;}
-  if(ms.kind[i]===1&&S.curLeaf>=0){S.curSum+=ms.v[i];S.curCount++;}
- }
- if(S.curLeaf>=0&&to>=L[S.curLeaf][0]+L[S.curLeaf][1]){finishLeaf();topDirty=true;}
- paintPoints(PS,ms,from,to);
- const sp=S.splitPtr;while(S.splitPtr<ms.splits.length&&ms.splits[S.splitPtr][0]<=to)S.splitPtr++;if(S.splitPtr>sp)paintSplits(sp,S.splitPtr);
- while(S.nodePtr<ms.nodes.length&&ms.nodes[S.nodePtr][0]<=to){S.depth=ms.nodes[S.nodePtr][1];S.maxDepth=Math.max(S.maxDepth,S.depth);S.nodePtr++;}
- if(topDirty)paintTop(PS);S.shown=to;
-}
-function chip(k,v){return `<div title="${k}: ${v}"><span class="k">${k}</span><span class="v">${v}</span></div>`;}
-function paintStats(){
- const n=D.n,k=S.shown,pct=n?100*k/n:0,state=n===0?"Waiting for Run Comparison":S.done?"Finished":"Sampling…";
- $("mc-state").textContent=state;$("ms-state").textContent=state;$("mc-bar").style.width=pct+"%";$("ms-bar").style.width=pct+"%";
- const mcEst=S.done?D.mc.estimate:(k?S.mcSum/k:NaN),curPart=S.curCount?S.curArea*S.curSum/S.curCount:0;
- const covered=S.doneArea+(S.curCount?S.curArea:0),msEst=S.done?D.ms.estimate:(covered>0?S.doneSum+curPart:NaN);
- if(D.binary){
-  $("mc-chips").innerHTML=chip("Samples",`${fmtInt(k)} / ${fmtInt(n)}`)+chip("Progress",pct.toFixed(1)+"%")+chip("f = 1",fmtInt(S.mcOnes))+chip("f = 0",fmtInt(k-S.mcOnes))+chip("Estimate",fmt(mcEst))+chip("Reference",fmt(D.reference));
-  $("ms-chips").innerHTML=chip("Samples",`${fmtInt(k)} / ${fmtInt(n)}`)+chip("Progress",pct.toFixed(1)+"%")+chip("f = 1",fmtInt(S.msOnes))+chip("f = 0",fmtInt(k-S.msOnes))+chip("Estimate",fmt(msEst))+chip("Depth",`${S.depth} (max ${S.maxDepth})`);
- }else{
-  const meanMC=k?S.mcSum/k:NaN,meanMS=k?S.msSum/k:NaN;
-  $("mc-chips").innerHTML=chip("Samples",`${fmtInt(k)} / ${fmtInt(n)}`)+chip("Progress",pct.toFixed(1)+"%")+chip("Running mean",fmt(meanMC))+chip("Final estimate",fmt(mcEst))+chip("Reference",fmt(D.reference))+chip("Elapsed",fmt(D.mc.elapsed,3)+" s");
-  $("ms-chips").innerHTML=chip("Samples",`${fmtInt(k)} / ${fmtInt(n)}`)+chip("Progress",pct.toFixed(1)+"%")+chip("Running mean",fmt(meanMS))+chip("Final estimate",fmt(msEst))+chip("Depth",`${S.depth} (max ${S.maxDepth})`)+chip("Elapsed",fmt(D.ms.elapsed,3)+" s");
- }
-}
-function tick(ts){
- rafId=null;if(!S.playing)return;if(S.lastTs!==null){const dt=Math.min(ts-S.lastTs,250);S.progress+=dt/1000*D.n/D.seconds;}
- S.lastTs=ts;advance(Math.min(D.n,Math.floor(S.progress)));if(S.shown>=D.n){S.done=true;S.playing=false;}paintStats();
- if(S.done&&!S.reported){S.reported=true;send("streamlit:setComponentValue",{value:D.run_id,dataType:"json"});}
- if(S.playing)rafId=requestAnimationFrame(tick);
-}
-function start(){
- if(rafId!==null)cancelAnimationFrame(rafId);rafId=null;S=freshState();legends();
- Promise.all([Plotly.newPlot("mc-plot",[],LAYOUT(),CFG),Plotly.newPlot("ms-plot",[],LAYOUT(),CFG)]).then(()=>{
-  PM=makePanel("mc");PS=makePanel("ms");fitPanel(PM);fitPanel(PS);paintTop(PM);paintTop(PS);paintStats();setHeight();
-  if(D.n>0){S.playing=true;rafId=requestAnimationFrame(tick);}
- });
-}
-let resizeTimer=null;
-window.addEventListener("resize",()=>{
- clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{
-  if(!D||!PM)return;Promise.all([Plotly.Plots.resize("mc-plot"),Plotly.Plots.resize("ms-plot")]).then(()=>{
-   for(const P of [PM,PS]){fitPanel(P);Object.values(P.layers).forEach(clearLayer);}
-   paintPoints(PM,D.mc,0,S.shown);paintPoints(PS,D.ms,0,S.shown);paintSplits(0,S.splitPtr);paintTop(PM);paintTop(PS);setHeight();
+
+function setHeight(){
+  send("streamlit:setFrameHeight",{
+    height:document.body.scrollHeight+6
   });
- },150);
+}
+
+const C={
+  mc:"#1f77b4",
+  ms:"#ff7f0e",
+  overlay:"#202020",
+  current:"#c2410c"
+};
+
+const BINARY={
+  mc:"rgba(31,119,180,0.78)",
+  ms:"rgba(255,127,14,0.82)",
+  zero:"rgba(148,163,184,0.48)"
+};
+
+let D=null;
+let S=null;
+let rafId=null;
+let PM=null;
+let PS=null;
+
+// 알고리즘별 애니메이션 재생 시간
+let mcDuration=15;
+let msDuration=15;
+
+const $=id=>document.getElementById(id);
+
+const fmtInt=x=>Math.round(x).toLocaleString("en-US");
+
+const fmt=(x,d=6)=>
+  Number.isFinite(x)?Number(x).toFixed(d):"—";
+
+const LAYOUT=()=>({
+  margin:{l:40,r:10,t:8,b:36},
+  showlegend:false,
+  dragmode:false,
+  xaxis:{
+    range:[0,1],
+    title:{text:"X",standoff:4},
+    zeroline:false,
+    fixedrange:true,
+    constrain:"domain",
+    dtick:.2
+  },
+  yaxis:{
+    range:[0,1],
+    title:{text:"Y",standoff:4},
+    zeroline:false,
+    fixedrange:true,
+    scaleanchor:"x",
+    constrain:"domain",
+    dtick:.2
+  },
+  plot_bgcolor:"#fff",
+  paper_bgcolor:"rgba(0,0,0,0)"
 });
-window.__liveState=()=>S&&({shown:S.shown,done:S.done,playing:S.playing,splits:S.splitPtr,leavesDone:S.leavesDone,nodes:S.nodePtr,depth:S.depth,runId:D.run_id,n:D.n});
+
+const CFG={
+  displayModeBar:false,
+  responsive:true
+};
+
+function makePanel(key){
+  const wrap=$(key+"-wrap");
+
+  wrap.querySelectorAll("canvas").forEach(c=>c.remove());
+
+  const layers={};
+
+  for(const name of ["splits","points","top"]){
+    const c=document.createElement("canvas");
+    c.className="layer";
+    wrap.appendChild(c);
+    layers[name]=c;
+  }
+
+  return {
+    key,
+    gd:$(key+"-plot"),
+    layers,
+    map:null,
+    painted:0
+  };
+}
+
+function fitPanel(P){
+  const xa=P.gd._fullLayout.xaxis;
+  const ya=P.gd._fullLayout.yaxis;
+
+  const dpr=window.devicePixelRatio||1;
+  const W=P.gd.clientWidth;
+  const H=P.gd.clientHeight;
+
+  for(const c of Object.values(P.layers)){
+    c.width=Math.round(W*dpr);
+    c.height=Math.round(H*dpr);
+
+    c.style.width=W+"px";
+    c.style.height=H+"px";
+
+    const ctx=c.getContext("2d");
+
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    ctx.beginPath();
+    ctx.rect(
+      xa._offset,
+      ya._offset,
+      xa._length,
+      ya._length
+    );
+    ctx.clip();
+  }
+
+  P.map={
+    px:x=>xa._offset+x*xa._length,
+    py:y=>ya._offset+(1-y)*ya._length,
+    scale:xa._length
+  };
+
+  P.painted=0;
+}
+
+function clearLayer(c){
+  const ctx=c.getContext("2d");
+
+  ctx.save();
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,c.width,c.height);
+  ctx.restore();
+}
+
+function dot(ctx,x,y,r){
+  ctx.moveTo(x+r,y);
+  ctx.arc(x,y,r,0,6.2832);
+}
+
+function valueColor(t,key){
+  const hue=240*(1-Math.max(0,Math.min(1,t)));
+  return `hsla(${hue},82%,48%,0.82)`;
+}
+
+function paintPoints(P,src,from,to){
+  if(to<=from)return;
+
+  P.painted+=to-from;
+
+  const ctx=P.layers.points.getContext("2d");
+  const m=P.map;
+
+  const r=Math.max(
+    1.25,
+    Math.min(2.15,9000/Math.max(D.n,1))
+  );
+
+  if(D.binary){
+
+    ctx.fillStyle=BINARY.zero;
+    ctx.beginPath();
+
+    for(let i=from;i<to;i++){
+      if(src.v[i]<0.5){
+        dot(
+          ctx,
+          m.px(src.x[i]),
+          m.py(src.y[i]),
+          r
+        );
+      }
+    }
+
+    ctx.fill();
+
+    ctx.fillStyle=BINARY[P.key];
+    ctx.beginPath();
+
+    for(let i=from;i<to;i++){
+      if(src.v[i]>=0.5){
+        dot(
+          ctx,
+          m.px(src.x[i]),
+          m.py(src.y[i]),
+          r
+        );
+      }
+    }
+
+    ctx.fill();
+
+  }else{
+
+    const lo=src.value_min;
+    const hi=src.value_max;
+    const range=(hi-lo)||1;
+
+    const bins=14;
+
+    const groups=Array.from(
+      {length:bins},
+      ()=>[]
+    );
+
+    for(let i=from;i<to;i++){
+      const b=Math.min(
+        bins-1,
+        Math.max(
+          0,
+          Math.floor((src.v[i]-lo)/range*bins)
+        )
+      );
+
+      groups[b].push(i);
+    }
+
+    for(let b=0;b<bins;b++){
+
+      if(!groups[b].length)continue;
+
+      ctx.fillStyle=valueColor(
+        (b+.5)/bins,
+        P.key
+      );
+
+      ctx.beginPath();
+
+      for(const i of groups[b]){
+        dot(
+          ctx,
+          m.px(src.x[i]),
+          m.py(src.y[i]),
+          r
+        );
+      }
+
+      ctx.fill();
+    }
+  }
+}
+
+function paintSplits(from,to){
+  const ctx=PS.layers.splits.getContext("2d");
+  const m=PS.map;
+
+  for(let i=from;i<to;i++){
+
+    const s=D.ms.splits[i];
+    const depth=s[5];
+
+    ctx.strokeStyle=
+      `rgba(160,82,45,${Math.max(.18,.6-.06*depth)})`;
+
+    ctx.lineWidth=depth<2?1.2:.8;
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+      m.px(s[1]),
+      m.py(s[2])
+    );
+
+    ctx.lineTo(
+      m.px(s[3]),
+      m.py(s[4])
+    );
+
+    ctx.stroke();
+  }
+}
+
+function paintTop(P){
+  const c=P.layers.top;
+  const ctx=c.getContext("2d");
+  const m=P.map;
+
+  clearLayer(c);
+
+  if(D.overlay&&D.overlay.length>=3){
+
+    const [cx,cy,r]=D.overlay;
+
+    ctx.strokeStyle=C.overlay;
+    ctx.lineWidth=1.8;
+
+    ctx.setLineDash(D.binary?[]:[5,4]);
+
+    ctx.beginPath();
+
+    ctx.arc(
+      m.px(cx),
+      m.py(cy),
+      Math.abs(r)*m.scale,
+      0,
+      6.2832
+    );
+
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  if(P.key==="ms"&&S&&S.curLeaf>=0){
+
+    const l=D.ms.leaves[S.curLeaf];
+
+    ctx.strokeStyle=C.current;
+    ctx.lineWidth=1.4;
+    ctx.setLineDash([4,3]);
+
+    ctx.strokeRect(
+      m.px(l[3]),
+      m.py(l[6]),
+      m.px(l[4])-m.px(l[3]),
+      m.py(l[5])-m.py(l[6])
+    );
+
+    ctx.setLineDash([]);
+  }
+}
+
+function legendFor(key){
+
+  const item=(cls,color,label)=>
+    `<span><i class="${cls}" style="${
+      cls==="dot"?"background":"border-top-color"
+    }:${color}"></i>${label}</span>`;
+
+  if(D.binary){
+
+    return item("dot",BINARY[key],"f = 1")
+      +item("dot",BINARY.zero,"f = 0")
+      +(D.overlay?item("line",C.overlay,"Boundary"):"")
+      +(key==="ms"
+        ?item("line","rgba(160,82,45,.6)","MISER split")
+         +item("line",C.current,"Current region")
+        :"");
+  }
+
+  return item("dot","#244bd6","Lower value")
+    +item("dot","#e3c52a","Mid value")
+    +item("dot","#d62728","Higher value")
+    +(D.overlay?item("line",C.overlay,"Reference guide"):"")
+    +(key==="ms"
+      ?item("line","rgba(160,82,45,.6)","MISER split")
+       +item("line",C.current,"Current region")
+      :"");
+}
+
+function legends(){
+  $("mc-legend").innerHTML=legendFor("mc");
+  $("ms-legend").innerHTML=legendFor("ms");
+}
+
+// 알고리즘별 상태를 독립적으로 관리
+function freshState(){
+
+  return {
+
+    mcShown:0,
+    msShown:0,
+
+    mcProgress:0,
+    msProgress:0,
+
+    lastTs:null,
+
+    mcDone:false,
+    msDone:false,
+
+    done:false,
+    playing:false,
+    reported:false,
+
+    mcSum:0,
+    msSum:0,
+
+    mcOnes:0,
+    msOnes:0,
+
+    leafPtr:0,
+    curLeaf:-1,
+
+    curSum:0,
+    curCount:0,
+    curArea:0,
+
+    doneSum:0,
+    doneArea:0,
+
+    leavesDone:0,
+
+    splitPtr:0,
+    nodePtr:0,
+
+    depth:0,
+    maxDepth:0
+  };
+}
+
+function finishLeaf(){
+
+  const l=D.ms.leaves[S.curLeaf];
+
+  S.doneSum+=l[8];
+  S.doneArea+=l[2];
+
+  S.leavesDone++;
+
+  S.curLeaf=-1;
+
+  S.curSum=0;
+  S.curCount=0;
+  S.curArea=0;
+}
+
+// --------------------------------------------------
+// Monte Carlo 전용 진행 함수
+// --------------------------------------------------
+
+function advanceMC(to){
+
+  const from=S.mcShown;
+
+  if(to<=from)return;
+
+  const mc=D.mc;
+
+  for(let i=from;i<to;i++){
+
+    S.mcSum+=mc.v[i];
+
+    if(mc.v[i]>=0.5){
+      S.mcOnes++;
+    }
+  }
+
+  paintPoints(PM,mc,from,to);
+
+  S.mcShown=to;
+
+  if(S.mcShown>=D.n){
+    S.mcDone=true;
+  }
+}
+
+// --------------------------------------------------
+// MISER 전용 진행 함수
+// --------------------------------------------------
+
+function advanceMS(to){
+
+  const from=S.msShown;
+
+  if(to<=from)return;
+
+  const ms=D.ms;
+  const L=ms.leaves;
+
+  let topDirty=false;
+
+  for(let i=from;i<to;i++){
+
+    // MISER 전체 표본 합계
+    S.msSum+=ms.v[i];
+
+    if(ms.v[i]>=0.5){
+      S.msOnes++;
+    }
+
+    // 현재 leaf의 표본 처리가 끝났는지 확인
+    if(
+      S.curLeaf>=0 &&
+      i>=L[S.curLeaf][0]+L[S.curLeaf][1]
+    ){
+
+      finishLeaf();
+      topDirty=true;
+    }
+
+    // 다음 leaf 진입
+    if(
+      S.leafPtr<L.length &&
+      i>=L[S.leafPtr][0]
+    ){
+
+      S.curLeaf=S.leafPtr++;
+
+      S.curSum=0;
+      S.curCount=0;
+      S.curArea=L[S.curLeaf][2];
+
+      topDirty=true;
+    }
+
+    // MISER의 실제 생산 표본만 leaf 통계에 반영
+    if(ms.kind[i]===1&&S.curLeaf>=0){
+
+      S.curSum+=ms.v[i];
+      S.curCount++;
+    }
+  }
+
+  // 마지막 leaf 종료 확인
+  if(
+    S.curLeaf>=0 &&
+    to>=L[S.curLeaf][0]+L[S.curLeaf][1]
+  ){
+
+    finishLeaf();
+    topDirty=true;
+  }
+
+  // MISER 표본 그리기
+  paintPoints(PS,ms,from,to);
+
+  // MISER 분할선 그리기
+  const sp=S.splitPtr;
+
+  while(
+    S.splitPtr<ms.splits.length &&
+    ms.splits[S.splitPtr][0]<=to
+  ){
+
+    S.splitPtr++;
+  }
+
+  if(S.splitPtr>sp){
+    paintSplits(sp,S.splitPtr);
+  }
+
+  // MISER 노드 깊이 갱신
+  while(
+    S.nodePtr<ms.nodes.length &&
+    ms.nodes[S.nodePtr][0]<=to
+  ){
+
+    S.depth=ms.nodes[S.nodePtr][1];
+
+    S.maxDepth=Math.max(
+      S.maxDepth,
+      S.depth
+    );
+
+    S.nodePtr++;
+  }
+
+  if(topDirty){
+    paintTop(PS);
+  }
+
+  S.msShown=to;
+
+  if(S.msShown>=D.n){
+    S.msDone=true;
+  }
+}
+
+function chip(k,v){
+
+  return `<div title="${k}: ${v}">
+    <span class="k">${k}</span>
+    <span class="v">${v}</span>
+  </div>`;
+}
+
+// --------------------------------------------------
+// 통계 표시: Monte Carlo와 MISER 각각 계산
+// --------------------------------------------------
+
+function paintStats(){
+
+  const n=D.n;
+
+  const mcK=S.mcShown;
+  const msK=S.msShown;
+
+  const mcPct=n?100*mcK/n:0;
+  const msPct=n?100*msK/n:0;
+
+  $("mc-state").textContent=
+    S.mcDone?"Finished":"Sampling…";
+
+  $("ms-state").textContent=
+    S.msDone?"Finished":"Sampling…";
+
+  $("mc-bar").style.width=mcPct+"%";
+  $("ms-bar").style.width=msPct+"%";
+
+  const mcEst=S.mcDone
+    ?D.mc.estimate
+    :(mcK?S.mcSum/mcK:NaN);
+
+  const curPart=S.curCount
+    ?S.curArea*S.curSum/S.curCount
+    :0;
+
+  const covered=S.doneArea+
+    (S.curCount?S.curArea:0);
+
+  const msEst=S.msDone
+    ?D.ms.estimate
+    :(covered>0?S.doneSum+curPart:NaN);
+
+  if(D.binary){
+
+    $("mc-chips").innerHTML=
+      chip("Samples",`${fmtInt(mcK)} / ${fmtInt(n)}`)
+      +chip("Progress",mcPct.toFixed(1)+"%")
+      +chip("f = 1",fmtInt(S.mcOnes))
+      +chip("f = 0",fmtInt(mcK-S.mcOnes))
+      +chip("Estimate",fmt(mcEst))
+      +chip("Reference",fmt(D.reference));
+
+    $("ms-chips").innerHTML=
+      chip("Samples",`${fmtInt(msK)} / ${fmtInt(n)}`)
+      +chip("Progress",msPct.toFixed(1)+"%")
+      +chip("f = 1",fmtInt(S.msOnes))
+      +chip("f = 0",fmtInt(msK-S.msOnes))
+      +chip("Estimate",fmt(msEst))
+      +chip("Depth",`${S.depth} (max ${S.maxDepth})`);
+
+  }else{
+
+    const meanMC=mcK?S.mcSum/mcK:NaN;
+    const meanMS=msK?S.msSum/msK:NaN;
+
+    $("mc-chips").innerHTML=
+      chip("Samples",`${fmtInt(mcK)} / ${fmtInt(n)}`)
+      +chip("Progress",mcPct.toFixed(1)+"%")
+      +chip("Running mean",fmt(meanMC))
+      +chip("Final estimate",fmt(mcEst))
+      +chip("Reference",fmt(D.reference))
+      +chip("Elapsed",fmt(D.mc.elapsed,3)+" s");
+
+    $("ms-chips").innerHTML=
+      chip("Samples",`${fmtInt(msK)} / ${fmtInt(n)}`)
+      +chip("Progress",msPct.toFixed(1)+"%")
+      +chip("Running mean",fmt(meanMS))
+      +chip("Final estimate",fmt(msEst))
+      +chip("Depth",`${S.depth} (max ${S.maxDepth})`)
+      +chip("Elapsed",fmt(D.ms.elapsed,3)+" s");
+  }
+}
+
+// --------------------------------------------------
+// 독립적인 애니메이션 진행
+// --------------------------------------------------
+
+function tick(ts){
+
+  rafId=null;
+
+  if(!S.playing)return;
+
+  if(S.lastTs!==null){
+
+    const dt=Math.min(ts-S.lastTs,250)/1000;
+
+    // Monte Carlo 독립 진행
+    if(!S.mcDone){
+
+      S.mcProgress+=dt*D.n/mcDuration;
+
+      const mcTarget=Math.min(
+        D.n,
+        Math.floor(S.mcProgress)
+      );
+
+      if(mcTarget>S.mcShown){
+        advanceMC(mcTarget);
+      }
+    }
+
+    // MISER 독립 진행
+    if(!S.msDone){
+
+      S.msProgress+=dt*D.n/msDuration;
+
+      const msTarget=Math.min(
+        D.n,
+        Math.floor(S.msProgress)
+      );
+
+      if(msTarget>S.msShown){
+        advanceMS(msTarget);
+      }
+    }
+  }
+
+  S.lastTs=ts;
+
+  paintStats();
+
+  // 두 알고리즘이 모두 끝나야 전체 종료
+  if(S.mcDone&&S.msDone){
+
+    S.done=true;
+    S.playing=false;
+
+    if(!S.reported){
+
+      S.reported=true;
+
+      send("streamlit:setComponentValue",{
+        value:D.run_id,
+        dataType:"json"
+      });
+    }
+
+    return;
+  }
+
+  if(S.playing){
+    rafId=requestAnimationFrame(tick);
+  }
+}
+
+// --------------------------------------------------
+// 실행 시간 비율에 따른 재생 시간 설정
+// --------------------------------------------------
+
+function setPlaybackDurations(){
+
+  const mcElapsed=Math.max(
+    Number(D.mc.elapsed)||0,
+    0.000001
+  );
+
+  const msElapsed=Math.max(
+    Number(D.ms.elapsed)||0,
+    0.000001
+  );
+
+  const maxElapsed=Math.max(
+    mcElapsed,
+    msElapsed
+  );
+
+  const totalDuration=Math.max(
+    Number(D.seconds)||15,
+    1
+  );
+
+  // 실제 실행 시간이 더 긴 알고리즘은
+  // 전체 애니메이션 시간만큼 재생
+  mcDuration=Math.max(
+    0.05,
+    totalDuration*mcElapsed/maxElapsed
+  );
+
+  msDuration=Math.max(
+    0.05,
+    totalDuration*msElapsed/maxElapsed
+  );
+}
+
+function start(){
+
+  if(rafId!==null){
+    cancelAnimationFrame(rafId);
+  }
+
+  rafId=null;
+
+  S=freshState();
+
+  setPlaybackDurations();
+
+  legends();
+
+  Promise.all([
+
+    Plotly.newPlot(
+      "mc-plot",
+      [],
+      LAYOUT(),
+      CFG
+    ),
+
+    Plotly.newPlot(
+      "ms-plot",
+      [],
+      LAYOUT(),
+      CFG
+    )
+
+  ]).then(()=>{
+
+    PM=makePanel("mc");
+    PS=makePanel("ms");
+
+    fitPanel(PM);
+    fitPanel(PS);
+
+    paintTop(PM);
+    paintTop(PS);
+
+    paintStats();
+    setHeight();
+
+    if(D.n>0){
+
+      S.playing=true;
+
+      rafId=requestAnimationFrame(tick);
+    }
+  });
+}
+
+// --------------------------------------------------
+// 창 크기 변경 시 그래프 다시 그리기
+// --------------------------------------------------
+
+let resizeTimer=null;
+
+window.addEventListener("resize",()=>{
+
+  clearTimeout(resizeTimer);
+
+  resizeTimer=setTimeout(()=>{
+
+    if(!D||!PM)return;
+
+    Promise.all([
+
+      Plotly.Plots.resize("mc-plot"),
+      Plotly.Plots.resize("ms-plot")
+
+    ]).then(()=>{
+
+      for(const P of [PM,PS]){
+
+        fitPanel(P);
+
+        Object.values(P.layers).forEach(clearLayer);
+      }
+
+      // 각각의 진행량에 맞춰 점을 다시 그림
+      paintPoints(
+        PM,
+        D.mc,
+        0,
+        S.mcShown
+      );
+
+      paintPoints(
+        PS,
+        D.ms,
+        0,
+        S.msShown
+      );
+
+      paintSplits(0,S.splitPtr);
+
+      paintTop(PM);
+      paintTop(PS);
+
+      setHeight();
+    });
+
+  },150);
+});
+
+// 외부에서 확인할 수 있는 현재 상태
+window.__liveState=()=>S&&({
+
+  mcShown:S.mcShown,
+  msShown:S.msShown,
+
+  mcDone:S.mcDone,
+  msDone:S.msDone,
+
+  done:S.done,
+  playing:S.playing,
+
+  splits:S.splitPtr,
+  leavesDone:S.leavesDone,
+  nodes:S.nodePtr,
+
+  depth:S.depth,
+
+  runId:D.run_id,
+  n:D.n,
+
+  mcDuration,
+  msDuration
+});
+
+// Streamlit 데이터 수신
 window.addEventListener("message",event=>{
- if(!event.data||event.data.type!=="streamlit:render")return;const P=event.data.args.payload;if(!P)return;
- if(D&&D.run_id===P.run_id){setHeight();return;}D=P;start();
+
+  if(
+    !event.data ||
+    event.data.type!=="streamlit:render"
+  )return;
+
+  const P=event.data.args.payload;
+
+  if(!P)return;
+
+  if(D&&D.run_id===P.run_id){
+
+    setHeight();
+    return;
+  }
+
+  D=P;
+
+  start();
 });
-send("streamlit:componentReady",{apiVersion:1});setHeight();
+
+send("streamlit:componentReady",{
+  apiVersion:1
+});
+
+setHeight();
 </script>
 </body>
 </html>
