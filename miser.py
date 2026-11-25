@@ -175,10 +175,17 @@ def run_miser(n, seed, leaf_size=300, func=None, bounds=None):
         }
         nodes.append(node)
 
-        # Pilot samples: m points in each half for every axis test.
-        m = min(16, max(8, count // 80))
-        pilot_cost = 2 * dim * m
-
+        PILOT_RATIO = 0.10
+        pilot_groups = 2 * dim
+        min_pilot_per_group = 2
+     
+        m = max(
+            min_pilot_per_group,
+            round(count * PILOT_RATIO / pilot_groups)
+        )
+        
+        pilot_cost = pilot_groups * m
+     
         # Stop if the region is too small for a reliable split.
         if count <= 2 * leaf_size + pilot_cost or depth >= 12:
             return leaf_estimate(box, count, node)
