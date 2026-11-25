@@ -4,327 +4,174 @@
 <meta charset="utf-8">
 <script src="plotly.min.js"></script>
 <style>
-  :root { --mc: #1f77b4; --ms: #ff7f0e; --muted: #6b7280; }
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: "Source Sans Pro", "Segoe UI", sans-serif;
-         color: #262730; background: #ffffff; }
-  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
-  .head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-  .head h4 { margin: 2px 0 4px; font-size: 21px; }
-  .head .state { color: var(--muted); font-size: 13px; }
-  .chips { display: grid; grid-template-columns: 1.55fr .95fr .9fr .95fr 1fr 1.35fr 1fr;
-           gap: 0 10px; font-size: 13px; padding: 6px 10px; border-radius: 8px;
-           background: #f6f7f9; }
-  .chips div { display: flex; flex-direction: column; min-width: 0; }
-  .chips .k, .chips .v { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .chips .k { color: var(--muted); font-size: 11.5px; }
-  .chips .v { font-weight: 600; font-variant-numeric: tabular-nums; }
-  .mc .chips { border-left: 4px solid var(--mc); }
-  .ms .chips { border-left: 4px solid var(--ms); }
-  .bar { height: 4px; background: #eef0f3; border-radius: 2px; margin: 6px 0 0; overflow: hidden; }
-  .bar > div { height: 100%; width: 0; }
-  .mc .bar > div { background: var(--mc); }
-  .ms .bar > div { background: var(--ms); }
-  .plotwrap { position: relative; width: min(100%, 600px); aspect-ratio: 1 / 1;
-              margin: 2px auto 0; }
-  .plot { position: absolute; inset: 0; }
-  canvas.layer { position: absolute; left: 0; top: 0; pointer-events: none; }
-  .legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px 14px;
-            font-size: 12px; color: #444; }
-  .legend i { display: inline-block; vertical-align: middle; margin-right: 5px; }
-  .legend i.dot { width: 8px; height: 8px; border-radius: 50%; }
-  .legend i.line { width: 14px; height: 0; border-top: 2px solid; }
+  :root { --mc:#1f77b4; --ms:#ff7f0e; --muted:#6b7280; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Source Sans Pro","Segoe UI",sans-serif; color:#262730; background:#fff; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+  .head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+  .head h4 { margin:2px 0 4px; font-size:20px; }
+  .head .state { color:var(--muted); font-size:13px; }
+  .chips { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:5px 8px; font-size:13px; padding:7px 9px; border-radius:8px; background:#f6f7f9; }
+  .chips div { display:flex; flex-direction:column; min-width:0; }
+  .chips .k,.chips .v { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chips .k { color:var(--muted); font-size:11px; }
+  .chips .v { font-weight:600; font-variant-numeric:tabular-nums; }
+  .mc .chips { border-left:4px solid var(--mc); }
+  .ms .chips { border-left:4px solid var(--ms); }
+  .bar { height:4px; background:#eef0f3; border-radius:2px; margin:6px 0 0; overflow:hidden; }
+  .bar>div { height:100%; width:0; }
+  .mc .bar>div { background:var(--mc); } .ms .bar>div { background:var(--ms); }
+  .plotwrap { position:relative; width:min(100%,600px); aspect-ratio:1/1; margin:2px auto 0; }
+  .plot { position:absolute; inset:0; }
+  canvas.layer { position:absolute; left:0; top:0; pointer-events:none; }
+  .legend { display:flex; flex-wrap:wrap; justify-content:center; gap:3px 13px; font-size:12px; color:#444; padding-bottom:8px; }
+  .legend i { display:inline-block; vertical-align:middle; margin-right:5px; }
+  .legend i.dot { width:9px; height:9px; border-radius:50%; }
+  .legend i.line { width:14px; height:0; border-top:2px solid; }
+  @media(max-width:700px) { .cols { grid-template-columns:1fr; gap:14px; } }
 </style>
 </head>
 <body>
 <div class="cols">
   <div class="panel mc">
-    <div class="head"><h4 style="color:var(--mc)">Plain Monte Carlo</h4>
-      <span class="state" id="mc-state"></span></div>
-    <div class="chips" id="mc-chips"></div>
-    <div class="bar"><div id="mc-bar"></div></div>
-    <div class="plotwrap" id="mc-wrap"><div class="plot" id="mc-plot"></div></div>
-    <div class="legend" id="mc-legend"></div>
+    <div class="head"><h4 style="color:var(--mc)">Plain Monte Carlo</h4><span class="state" id="mc-state"></span></div>
+    <div class="chips" id="mc-chips"></div><div class="bar"><div id="mc-bar"></div></div>
+    <div class="plotwrap" id="mc-wrap"><div class="plot" id="mc-plot"></div></div><div class="legend" id="mc-legend"></div>
   </div>
   <div class="panel ms">
-    <div class="head"><h4 style="color:var(--ms)">MISER Algorithm</h4>
-      <span class="state" id="ms-state"></span></div>
-    <div class="chips" id="ms-chips"></div>
-    <div class="bar"><div id="ms-bar"></div></div>
-    <div class="plotwrap" id="ms-wrap"><div class="plot" id="ms-plot"></div></div>
-    <div class="legend" id="ms-legend"></div>
+    <div class="head"><h4 style="color:var(--ms)">MISER Algorithm</h4><span class="state" id="ms-state"></span></div>
+    <div class="chips" id="ms-chips"></div><div class="bar"><div id="ms-bar"></div></div>
+    <div class="plotwrap" id="ms-wrap"><div class="plot" id="ms-plot"></div></div><div class="legend" id="ms-legend"></div>
   </div>
 </div>
-
 <script>
-/*
- * Circle-sampling player (no controls: started by the sidebar's Run Comparison).
- *
- * Plotly draws only the empty unit-square axes. Points are painted on a canvas
- * layer and only the NEW points are painted each frame, so earlier points are
- * kept and 100k samples stay smooth. Layers (bottom → top):
- *   plotly axes | MISER split lines | points | circle + current MISER region
- *
- * Inside/outside colouring uses the algorithm's own f values (circle indicator,
- * 1 = inside), i.e. the real judgement made during the run.
- */
-
-function send(type, data) {
-  window.parent.postMessage(Object.assign({isStreamlitMessage: true, type}, data || {}), "*");
+function send(type,data){window.parent.postMessage(Object.assign({isStreamlitMessage:true,type},data||{}),"*");}
+function setHeight(){send("streamlit:setFrameHeight",{height:document.body.scrollHeight+6});}
+const C={mc:"#1f77b4",ms:"#ff7f0e",overlay:"#202020",current:"#c2410c"};
+const BINARY={mc:"rgba(31,119,180,0.78)",ms:"rgba(255,127,14,0.82)",zero:"rgba(148,163,184,0.48)"};
+let D=null,S=null,rafId=null,PM=null,PS=null;
+const $=id=>document.getElementById(id);
+const fmtInt=x=>Math.round(x).toLocaleString("en-US");
+const fmt=(x,d=6)=>Number.isFinite(x)?Number(x).toFixed(d):"—";
+const LAYOUT=()=>({margin:{l:40,r:10,t:8,b:36},showlegend:false,dragmode:false,
+ xaxis:{range:[0,1],title:{text:"X",standoff:4},zeroline:false,fixedrange:true,constrain:"domain",dtick:.2},
+ yaxis:{range:[0,1],title:{text:"Y",standoff:4},zeroline:false,fixedrange:true,scaleanchor:"x",constrain:"domain",dtick:.2},
+ plot_bgcolor:"#fff",paper_bgcolor:"rgba(0,0,0,0)"});
+const CFG={displayModeBar:false,responsive:true};
+function makePanel(key){
+ const wrap=$(key+"-wrap");wrap.querySelectorAll("canvas").forEach(c=>c.remove());
+ const layers={};for(const name of ["splits","points","top"]){const c=document.createElement("canvas");c.className="layer";wrap.appendChild(c);layers[name]=c;}
+ return {key,gd:$(key+"-plot"),layers,map:null,painted:0};
 }
-function setHeight() { send("streamlit:setFrameHeight", {height: document.body.scrollHeight + 6}); }
-
-const C = {mc: "#1f77b4", ms: "#ff7f0e", circle: "#202020", current: "#c2410c"};
-const INSIDE = {mc: "rgba(31,119,180,0.75)", ms: "rgba(255,127,14,0.80)"};
-const OUTSIDE = {mc: "rgba(148,163,184,0.45)", ms: "rgba(148,163,184,0.45)"};
-
-let D = null, S = null, rafId = null, PM = null, PS = null;
-const $ = (id) => document.getElementById(id);
-const fmtInt = (x) => Math.round(x).toLocaleString("en-US");
-const fmt = (x, d = 6) => Number.isFinite(x) ? x.toFixed(d) : "—";
-
-// ---------------------------------------------------------------- plot + layers
-const LAYOUT = () => ({
-  margin: {l: 40, r: 10, t: 8, b: 36}, showlegend: false, dragmode: false,
-  xaxis: {range: [0, 1], title: {text: "X", standoff: 4}, zeroline: false,
-          fixedrange: true, constrain: "domain", dtick: 0.2},
-  yaxis: {range: [0, 1], title: {text: "Y", standoff: 4}, zeroline: false,
-          fixedrange: true, scaleanchor: "x", constrain: "domain", dtick: 0.2},
-  plot_bgcolor: "#fff", paper_bgcolor: "rgba(0,0,0,0)",
-});
-const CFG = {displayModeBar: false, responsive: true};
-
-function makePanel(key) {
-  const wrap = $(key + "-wrap");
-  wrap.querySelectorAll("canvas").forEach((c) => c.remove());
-  const layers = {};
-  for (const name of ["splits", "points", "top"]) {
-    const c = document.createElement("canvas");
-    c.className = "layer"; wrap.appendChild(c); layers[name] = c;
-  }
-  return {key, gd: $(key + "-plot"), layers, map: null, painted: 0};
+function fitPanel(P){
+ const xa=P.gd._fullLayout.xaxis,ya=P.gd._fullLayout.yaxis,dpr=window.devicePixelRatio||1,W=P.gd.clientWidth,H=P.gd.clientHeight;
+ for(const c of Object.values(P.layers)){c.width=Math.round(W*dpr);c.height=Math.round(H*dpr);c.style.width=W+"px";c.style.height=H+"px";
+  const ctx=c.getContext("2d");ctx.setTransform(dpr,0,0,dpr,0,0);ctx.beginPath();ctx.rect(xa._offset,ya._offset,xa._length,ya._length);ctx.clip();}
+ P.map={px:x=>xa._offset+x*xa._length,py:y=>ya._offset+(1-y)*ya._length,scale:xa._length};P.painted=0;
 }
-
-function fitPanel(P) {
-  const xa = P.gd._fullLayout.xaxis, ya = P.gd._fullLayout.yaxis;
-  const dpr = window.devicePixelRatio || 1, W = P.gd.clientWidth, H = P.gd.clientHeight;
-  for (const c of Object.values(P.layers)) {
-    c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
-    c.style.width = W + "px"; c.style.height = H + "px";
-    const ctx = c.getContext("2d");
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.beginPath(); ctx.rect(xa._offset, ya._offset, xa._length, ya._length); ctx.clip();
-  }
-  P.map = {px: (x) => xa._offset + x * xa._length,
-           py: (y) => ya._offset + (1 - y) * ya._length, scale: xa._length};
-  P.painted = 0;
+function clearLayer(c){const ctx=c.getContext("2d");ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,c.width,c.height);ctx.restore();}
+function dot(ctx,x,y,r){ctx.moveTo(x+r,y);ctx.arc(x,y,r,0,6.2832);}
+function valueColor(t,key){
+ // Continuous-value palette: deep blue -> cyan -> yellow -> red.
+ const hue=240*(1-Math.max(0,Math.min(1,t)));
+ return `hsla(${hue},82%,48%,0.82)`;
 }
-
-function clearLayer(c) {
-  const ctx = c.getContext("2d");
-  ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, c.width, c.height); ctx.restore();
+function paintPoints(P,src,from,to){
+ if(to<=from)return;P.painted+=to-from;const ctx=P.layers.points.getContext("2d"),m=P.map;
+ const r=Math.max(1.25,Math.min(2.15,9000/Math.max(D.n,1)));
+ if(D.binary){
+  ctx.fillStyle=BINARY.zero;ctx.beginPath();for(let i=from;i<to;i++)if(src.v[i]<0.5)dot(ctx,m.px(src.x[i]),m.py(src.y[i]),r);ctx.fill();
+  ctx.fillStyle=BINARY[P.key];ctx.beginPath();for(let i=from;i<to;i++)if(src.v[i]>=0.5)dot(ctx,m.px(src.x[i]),m.py(src.y[i]),r);ctx.fill();
+ }else{
+  const lo=src.value_min,hi=src.value_max,range=(hi-lo)||1,bins=14,groups=Array.from({length:bins},()=>[]);
+  for(let i=from;i<to;i++){const b=Math.min(bins-1,Math.max(0,Math.floor((src.v[i]-lo)/range*bins)));groups[b].push(i);}
+  for(let b=0;b<bins;b++){if(!groups[b].length)continue;ctx.fillStyle=valueColor((b+.5)/bins,P.key);ctx.beginPath();
+   for(const i of groups[b])dot(ctx,m.px(src.x[i]),m.py(src.y[i]),r);ctx.fill();}
+ }
 }
-
-function dot(ctx, x, y, r) { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, 6.2832); }
-
-// Append samples [from, to): coloured by the algorithm's own inside/outside value.
-function paintPoints(P, src, from, to) {
-  if (to <= from) return;
-  P.painted += to - from;
-  const ctx = P.layers.points.getContext("2d"), m = P.map;
-  const r = Math.max(1.3, Math.min(2.2, 9000 / Math.max(D.n, 1)));
-  ctx.fillStyle = OUTSIDE[P.key]; ctx.beginPath();
-  for (let i = from; i < to; i++) if (!src.v[i]) dot(ctx, m.px(src.x[i]), m.py(src.y[i]), r);
-  ctx.fill();
-  ctx.fillStyle = INSIDE[P.key]; ctx.beginPath();
-  for (let i = from; i < to; i++) if (src.v[i]) dot(ctx, m.px(src.x[i]), m.py(src.y[i]), r);
-  ctx.fill();
+function paintSplits(from,to){
+ const ctx=PS.layers.splits.getContext("2d"),m=PS.map;
+ for(let i=from;i<to;i++){const s=D.ms.splits[i],depth=s[5];ctx.strokeStyle=`rgba(160,82,45,${Math.max(.18,.6-.06*depth)})`;ctx.lineWidth=depth<2?1.2:.8;
+  ctx.beginPath();ctx.moveTo(m.px(s[1]),m.py(s[2]));ctx.lineTo(m.px(s[3]),m.py(s[4]));ctx.stroke();}
 }
-
-// Thin, translucent split lines; deeper splits are lighter so many lines stay readable.
-function paintSplits(from, to) {
-  const ctx = PS.layers.splits.getContext("2d"), m = PS.map;
-  for (let i = from; i < to; i++) {
-    const s = D.ms.splits[i], depth = s[5];
-    ctx.strokeStyle = `rgba(160,82,45,${Math.max(0.18, 0.6 - 0.06 * depth)})`;
-    ctx.lineWidth = depth < 2 ? 1.2 : 0.8;
-    ctx.beginPath(); ctx.moveTo(m.px(s[1]), m.py(s[2])); ctx.lineTo(m.px(s[3]), m.py(s[4]));
-    ctx.stroke();
-  }
+function paintTop(P){
+ const c=P.layers.top,ctx=c.getContext("2d"),m=P.map;clearLayer(c);
+ if(D.overlay&&D.overlay.length>=3){const [cx,cy,r]=D.overlay;ctx.strokeStyle=C.overlay;ctx.lineWidth=1.8;ctx.setLineDash(D.binary?[]:[5,4]);ctx.beginPath();ctx.arc(m.px(cx),m.py(cy),Math.abs(r)*m.scale,0,6.2832);ctx.stroke();ctx.setLineDash([]);}
+ if(P.key==="ms"&&S&&S.curLeaf>=0){const l=D.ms.leaves[S.curLeaf];ctx.strokeStyle=C.current;ctx.lineWidth=1.4;ctx.setLineDash([4,3]);
+  ctx.strokeRect(m.px(l[3]),m.py(l[6]),m.px(l[4])-m.px(l[3]),m.py(l[5])-m.py(l[6]));ctx.setLineDash([]);}
 }
-
-// Top layer: the circle (always above the points) and the MISER region being sampled.
-function paintTop(P) {
-  const c = P.layers.top, ctx = c.getContext("2d"), m = P.map;
-  clearLayer(c);
-  const [cx, cy, r] = D.circle;
-  ctx.strokeStyle = C.circle; ctx.lineWidth = 2; ctx.beginPath();
-  ctx.arc(m.px(cx), m.py(cy), r * m.scale, 0, 6.2832); ctx.stroke();
-  if (P.key === "ms" && S && S.curLeaf >= 0) {
-    const l = D.ms.leaves[S.curLeaf];
-    ctx.strokeStyle = C.current; ctx.lineWidth = 1.4; ctx.setLineDash([4, 3]);
-    ctx.strokeRect(m.px(l[3]), m.py(l[6]), m.px(l[4]) - m.px(l[3]), m.py(l[5]) - m.py(l[6]));
-    ctx.setLineDash([]);
-  }
+function legendFor(key){
+ const item=(cls,color,label)=>`<span><i class="${cls}" style="${cls==="dot"?"background":"border-top-color"}:${color}"></i>${label}</span>`;
+ if(D.binary)return item("dot",BINARY[key], "f = 1") + item("dot",BINARY.zero,"f = 0") +
+  (D.overlay?item("line",C.overlay,"Boundary"):"") +
+  (key==="ms"?item("line","rgba(160,82,45,.6)","MISER split") + item("line",C.current,"Current region"):"");
+ return item("dot","#244bd6","Lower value") + item("dot","#e3c52a","Mid value") + item("dot","#d62728","Higher value") +
+  (D.overlay?item("line",C.overlay,"Reference guide"):"") +
+  (key==="ms"?item("line","rgba(160,82,45,.6)","MISER split") + item("line",C.current,"Current region"):"");
 }
-
-function legends() {
-  const item = (cls, color, label) => `<span><i class="${cls}" style="${
-    cls === "dot" ? "background" : "border-top-color"}:${color}"></i>${label}</span>`;
-  $("mc-legend").innerHTML = item("line", C.circle, "Circle") +
-    item("dot", C.mc, "Inside circle") + item("dot", "#94a3b8", "Outside circle");
-  $("ms-legend").innerHTML = item("line", C.circle, "Circle") +
-    item("dot", C.ms, "Inside circle") + item("dot", "#94a3b8", "Outside circle") +
-    item("line", "rgba(160,82,45,0.6)", "Split boundary") +
-    item("line", C.current, "Region being sampled");
+function legends(){$("mc-legend").innerHTML=legendFor("mc");$("ms-legend").innerHTML=legendFor("ms");}
+function freshState(){return {shown:0,progress:0,lastTs:null,done:false,playing:false,reported:false,mcSum:0,msSum:0,mcOnes:0,msOnes:0,
+ leafPtr:0,curLeaf:-1,curSum:0,curCount:0,curArea:0,doneSum:0,doneArea:0,leavesDone:0,splitPtr:0,nodePtr:0,depth:0,maxDepth:0};}
+function finishLeaf(){const l=D.ms.leaves[S.curLeaf];S.doneSum+=l[8];S.doneArea+=l[2];S.leavesDone++;S.curLeaf=-1;S.curSum=0;S.curCount=0;S.curArea=0;}
+function advance(to){
+ const from=S.shown;if(to<=from)return;const mc=D.mc,ms=D.ms,L=ms.leaves;
+ for(let i=from;i<to;i++){S.mcSum+=mc.v[i];S.msSum+=ms.v[i];if(mc.v[i]>=.5)S.mcOnes++;if(ms.v[i]>=.5)S.msOnes++;}
+ paintPoints(PM,mc,from,to);
+ let topDirty=false;
+ for(let i=from;i<to;i++){
+  if(S.curLeaf>=0&&i>=L[S.curLeaf][0]+L[S.curLeaf][1]){finishLeaf();topDirty=true;}
+  if(S.leafPtr<L.length&&i>=L[S.leafPtr][0]){S.curLeaf=S.leafPtr++;S.curSum=0;S.curCount=0;S.curArea=L[S.curLeaf][2];topDirty=true;}
+  if(ms.kind[i]===1&&S.curLeaf>=0){S.curSum+=ms.v[i];S.curCount++;}
+ }
+ if(S.curLeaf>=0&&to>=L[S.curLeaf][0]+L[S.curLeaf][1]){finishLeaf();topDirty=true;}
+ paintPoints(PS,ms,from,to);
+ const sp=S.splitPtr;while(S.splitPtr<ms.splits.length&&ms.splits[S.splitPtr][0]<=to)S.splitPtr++;if(S.splitPtr>sp)paintSplits(sp,S.splitPtr);
+ while(S.nodePtr<ms.nodes.length&&ms.nodes[S.nodePtr][0]<=to){S.depth=ms.nodes[S.nodePtr][1];S.maxDepth=Math.max(S.maxDepth,S.depth);S.nodePtr++;}
+ if(topDirty)paintTop(PS);S.shown=to;
 }
-
-// ---------------------------------------------------------------- state
-function freshState() {
-  return {shown: 0, progress: 0, lastTs: null, done: false, playing: false, reported: false,
-          mcIn: 0, msIn: 0,
-          leafPtr: 0, curLeaf: -1, curSum: 0, curCount: 0, curArea: 0,
-          doneSum: 0, doneArea: 0, leavesDone: 0, splitPtr: 0, nodePtr: 0,
-          depth: 0, maxDepth: 0};
+function chip(k,v){return `<div title="${k}: ${v}"><span class="k">${k}</span><span class="v">${v}</span></div>`;}
+function paintStats(){
+ const n=D.n,k=S.shown,pct=n?100*k/n:0,state=n===0?"Waiting for Run Comparison":S.done?"Finished":"Sampling…";
+ $("mc-state").textContent=state;$("ms-state").textContent=state;$("mc-bar").style.width=pct+"%";$("ms-bar").style.width=pct+"%";
+ const mcEst=S.done?D.mc.estimate:(k?S.mcSum/k:NaN),curPart=S.curCount?S.curArea*S.curSum/S.curCount:0;
+ const covered=S.doneArea+(S.curCount?S.curArea:0),msEst=S.done?D.ms.estimate:(covered>0?S.doneSum+curPart:NaN);
+ if(D.binary){
+  $("mc-chips").innerHTML=chip("Samples",`${fmtInt(k)} / ${fmtInt(n)}`)+chip("Progress",pct.toFixed(1)+"%")+chip("f = 1",fmtInt(S.mcOnes))+chip("f = 0",fmtInt(k-S.mcOnes))+chip("Estimate",fmt(mcEst))+chip("Reference",fmt(D.reference));
+  $("ms-chips").innerHTML=chip("Samples",`${fmtInt(k)} / ${fmtInt(n)}`)+chip("Progress",pct.toFixed(1)+"%")+chip("f = 1",fmtInt(S.msOnes))+chip("f = 0",fmtInt(k-S.msOnes))+chip("Estimate",fmt(msEst))+chip("Depth",`${S.depth} (max ${S.maxDepth})`);
+ }else{
+  const meanMC=k?S.mcSum/k:NaN,meanMS=k?S.msSum/k:NaN;
+  $("mc-chips").innerHTML=chip("Samples",`${fmtInt(k)} / ${fmtInt(n)}`)+chip("Progress",pct.toFixed(1)+"%")+chip("Running mean",fmt(meanMC))+chip("Final estimate",fmt(mcEst))+chip("Reference",fmt(D.reference))+chip("Elapsed",fmt(D.mc.elapsed,3)+" s");
+  $("ms-chips").innerHTML=chip("Samples",`${fmtInt(k)} / ${fmtInt(n)}`)+chip("Progress",pct.toFixed(1)+"%")+chip("Running mean",fmt(meanMS))+chip("Final estimate",fmt(msEst))+chip("Depth",`${S.depth} (max ${S.maxDepth})`)+chip("Elapsed",fmt(D.ms.elapsed,3)+" s");
+ }
 }
-
-function advance(to) {
-  const from = S.shown;
-  if (to <= from) return;
-  const mc = D.mc, ms = D.ms, L = ms.leaves;
-
-  for (let i = from; i < to; i++) S.mcIn += mc.v[i];
-  paintPoints(PM, mc, from, to);
-
-  let topDirty = false;
-  for (let i = from; i < to; i++) {
-    if (S.curLeaf >= 0 && i >= L[S.curLeaf][0] + L[S.curLeaf][1]) { finishLeaf(); topDirty = true; }
-    if (S.leafPtr < L.length && i >= L[S.leafPtr][0]) {
-      S.curLeaf = S.leafPtr++; S.curSum = 0; S.curCount = 0; S.curArea = L[S.curLeaf][2];
-      topDirty = true;
-    }
-    if (ms.kind[i] === 1) { S.curSum += ms.v[i]; S.curCount++; }
-    S.msIn += ms.v[i];
-  }
-  if (S.curLeaf >= 0 && to >= L[S.curLeaf][0] + L[S.curLeaf][1]) { finishLeaf(); topDirty = true; }
-  paintPoints(PS, ms, from, to);
-
-  const sp = S.splitPtr;
-  while (S.splitPtr < ms.splits.length && ms.splits[S.splitPtr][0] <= to) S.splitPtr++;
-  if (S.splitPtr > sp) paintSplits(sp, S.splitPtr);
-  while (S.nodePtr < ms.nodes.length && ms.nodes[S.nodePtr][0] <= to) {
-    S.depth = ms.nodes[S.nodePtr][1]; S.maxDepth = Math.max(S.maxDepth, S.depth); S.nodePtr++;
-  }
-  if (topDirty) paintTop(PS);
-  S.shown = to;
+function tick(ts){
+ rafId=null;if(!S.playing)return;if(S.lastTs!==null){const dt=Math.min(ts-S.lastTs,250);S.progress+=dt/1000*D.n/D.seconds;}
+ S.lastTs=ts;advance(Math.min(D.n,Math.floor(S.progress)));if(S.shown>=D.n){S.done=true;S.playing=false;}paintStats();
+ if(S.done&&!S.reported){S.reported=true;send("streamlit:setComponentValue",{value:D.run_id,dataType:"json"});}
+ if(S.playing)rafId=requestAnimationFrame(tick);
 }
-
-function finishLeaf() {
-  const l = D.ms.leaves[S.curLeaf];
-  S.doneSum += l[8];   // the leaf's area × inside-fraction, as computed by run_miser
-  S.doneArea += l[2];
-  S.leavesDone++;
-  S.curLeaf = -1; S.curSum = 0; S.curCount = 0; S.curArea = 0;
+function start(){
+ if(rafId!==null)cancelAnimationFrame(rafId);rafId=null;S=freshState();legends();
+ Promise.all([Plotly.newPlot("mc-plot",[],LAYOUT(),CFG),Plotly.newPlot("ms-plot",[],LAYOUT(),CFG)]).then(()=>{
+  PM=makePanel("mc");PS=makePanel("ms");fitPanel(PM);fitPanel(PS);paintTop(PM);paintTop(PS);paintStats();setHeight();
+  if(D.n>0){S.playing=true;rafId=requestAnimationFrame(tick);}
+ });
 }
-
-// ---------------------------------------------------------------- stats
-function chip(k, v) {
-  return `<div title="${k}: ${v}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
-}
-
-function paintStats() {
-  const n = D.n, k = S.shown, pct = n ? 100 * k / n : 0;
-  const state = n === 0 ? "Waiting for Run Comparison" : S.done ? "Finished" : "Sampling…";
-  $("mc-state").textContent = state; $("ms-state").textContent = state;
-  $("mc-bar").style.width = pct + "%"; $("ms-bar").style.width = pct + "%";
-
-  // Plain MC: area = (inside / total) × square area (1) — identical to its estimator.
-  const mcEst = S.done ? D.mc.estimate : (k ? S.mcIn / k : NaN);
-  $("mc-chips").innerHTML =
-    chip("Samples", `${fmtInt(k)} / ${fmtInt(n)}`) + chip("Progress", pct.toFixed(1) + "%") +
-    chip("Inside", fmtInt(S.mcIn)) + chip("Outside", fmtInt(k - S.mcIn)) +
-    chip("Inside ratio", k ? (100 * S.mcIn / k).toFixed(2) + "%" : "—") +
-    chip(S.done ? "Final estimate" : "Estimate", fmt(mcEst)) +
-    chip("True area πr²", fmt(D.reference));
-
-  // MISER: weighted estimate = Σ region area × inside-fraction of that region,
-  // never the overall inside ratio. While running it covers only finished regions.
-  const curPart = S.curCount ? S.curArea * S.curSum / S.curCount : 0;
-  const covered = S.doneArea + (S.curCount ? S.curArea : 0);
-  const msEst = S.done ? D.ms.estimate : (covered > 0 ? S.doneSum + curPart : NaN);
-  $("ms-chips").innerHTML =
-    chip("Samples", `${fmtInt(k)} / ${fmtInt(n)}`) + chip("Progress", pct.toFixed(1) + "%") +
-    chip("Inside", fmtInt(S.msIn)) + chip("Outside", fmtInt(k - S.msIn)) +
-    chip("Inside ratio", k ? (100 * S.msIn / k).toFixed(2) + "%" : "—") +
-    chip(S.done ? "Final estimate" : `Estimate · ${(100 * covered).toFixed(0)}% area`, fmt(msEst)) +
-    chip("Depth", `${S.depth} (max ${S.maxDepth})`);
-}
-
-// ---------------------------------------------------------------- loop
-function tick(ts) {
-  rafId = null;
-  if (!S.playing) return;
-  if (S.lastTs !== null) {
-    const dt = Math.min(ts - S.lastTs, 250);
-    S.progress += dt / 1000 * D.n / D.seconds;
-  }
-  S.lastTs = ts;
-  advance(Math.min(D.n, Math.floor(S.progress)));
-  if (S.shown >= D.n) { S.done = true; S.playing = false; }
-  paintStats();
-  if (S.done && !S.reported) {          // tell Streamlit: show the final statistics
-    S.reported = true;
-    send("streamlit:setComponentValue", {value: D.run_id, dataType: "json"});
-  }
-  if (S.playing) rafId = requestAnimationFrame(tick);
-}
-
-function start() {
-  if (rafId !== null) cancelAnimationFrame(rafId);
-  rafId = null;
-  S = freshState();
-  legends();
-  Promise.all([Plotly.newPlot("mc-plot", [], LAYOUT(), CFG),
-               Plotly.newPlot("ms-plot", [], LAYOUT(), CFG)]).then(() => {
-    PM = makePanel("mc"); PS = makePanel("ms");
-    fitPanel(PM); fitPanel(PS); paintTop(PM); paintTop(PS);
-    paintStats(); setHeight();
-    if (D.n > 0) { S.playing = true; rafId = requestAnimationFrame(tick); }
+let resizeTimer=null;
+window.addEventListener("resize",()=>{
+ clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{
+  if(!D||!PM)return;Promise.all([Plotly.Plots.resize("mc-plot"),Plotly.Plots.resize("ms-plot")]).then(()=>{
+   for(const P of [PM,PS]){fitPanel(P);Object.values(P.layers).forEach(clearLayer);}
+   paintPoints(PM,D.mc,0,S.shown);paintPoints(PS,D.ms,0,S.shown);paintSplits(0,S.splitPtr);paintTop(PM);paintTop(PS);setHeight();
   });
-}
-
-// Re-fit after a resize: repaint everything that has been shown so far.
-let resizeTimer = null;
-window.addEventListener("resize", () => {
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => {
-    if (!D || !PM) return;
-    Promise.all([Plotly.Plots.resize("mc-plot"), Plotly.Plots.resize("ms-plot")]).then(() => {
-      for (const P of [PM, PS]) { fitPanel(P); Object.values(P.layers).forEach(clearLayer); }
-      paintPoints(PM, D.mc, 0, S.shown); paintPoints(PS, D.ms, 0, S.shown);
-      paintSplits(0, S.splitPtr); paintTop(PM); paintTop(PS); setHeight();
-    });
-  }, 150);
+ },150);
 });
-
-// Test hook (read-only snapshot)
-window.__liveState = () => S && {shown: S.shown, done: S.done, playing: S.playing,
-  mcIn: S.mcIn, msIn: S.msIn, splits: S.splitPtr, leavesDone: S.leavesDone,
-  nodes: S.nodePtr, depth: S.depth, msPartial: S.doneSum, runId: D.run_id, n: D.n,
-  mcPoints: PM ? PM.painted : 0, msPoints: PS ? PS.painted : 0};
-
-// A new run_id (sidebar Run Comparison) restarts from scratch; the same run_id
-// (any other Streamlit rerun, e.g. a settings change) leaves the animation alone.
-window.addEventListener("message", (event) => {
-  if (!event.data || event.data.type !== "streamlit:render") return;
-  const P = event.data.args.payload;
-  if (!P) return;
-  if (D && D.run_id === P.run_id) { setHeight(); return; }
-  D = P;
-  start();
+window.__liveState=()=>S&&({shown:S.shown,done:S.done,playing:S.playing,splits:S.splitPtr,leavesDone:S.leavesDone,nodes:S.nodePtr,depth:S.depth,runId:D.run_id,n:D.n});
+window.addEventListener("message",event=>{
+ if(!event.data||event.data.type!=="streamlit:render")return;const P=event.data.args.payload;if(!P)return;
+ if(D&&D.run_id===P.run_id){setHeight();return;}D=P;start();
 });
-send("streamlit:componentReady", {apiVersion: 1});
-setHeight();
+send("streamlit:componentReady",{apiVersion:1});setHeight();
 </script>
 </body>
 </html>
