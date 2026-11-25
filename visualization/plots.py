@@ -117,7 +117,12 @@ def sampling_figure_1d(integrand, bounds, result, algo, max_points, y_range,
 # ---------------------------------------------------------------- sampling 2D
 
 def _circle(circle):
-    cx, cy, r = circle
+    """Return circle coordinates, or None when a scenario has no circle."""
+    if circle is None:
+        return None
+    if len(circle) != 3:
+        raise ValueError("circle must be None or a (cx, cy, radius) tuple")
+    cx, cy, r = map(float, circle)
     theta = np.linspace(0, 2 * np.pi, 180)
     return cx + r * np.cos(theta), cy + r * np.sin(theta)
 
@@ -180,11 +185,14 @@ def sampling_figure_2d(result, algo, max_points, circle, area_mode=False):
             line=dict(color="#a0522d", width=1.4), hoverinfo="skip",
         ))
 
-    cx, cy = _circle(circle)
-    fig.add_trace(go.Scatter(x=cx, y=cy, mode="lines",
-                             name="Circle" if area_mode else "Village boundary",
-                             line=dict(color=CURVE_COLOR, width=2),
-                             hoverinfo="skip"))
+    circle_xy = _circle(circle)
+    if circle_xy is not None:
+        cx, cy = circle_xy
+        fig.add_trace(go.Scatter(
+            x=cx, y=cy, mode="lines",
+            name="Circle" if area_mode else "Reference boundary",
+            line=dict(color=CURVE_COLOR, width=2), hoverinfo="skip",
+        ))
     fig.update_xaxes(range=[0, 1], title_text="x", constrain="domain")
     fig.update_yaxes(range=[0, 1], title_text="y", scaleanchor="x",
                      constrain="domain")
@@ -252,10 +260,14 @@ def partition_figure_2d(regions, max_density, circle):
             hovertext=_hover(r) + f"<br>Evaluation density: {d:,.0f} / unit area",
             hoverinfo="text", hoveron="fills", showlegend=False,
         ))
-    cx, cy = _circle(circle)
-    fig.add_trace(go.Scatter(x=cx, y=cy, mode="lines", name="Circle boundary",
-                             line=dict(color=CURVE_COLOR, width=2, dash="dash"),
-                             hoverinfo="skip"))
+    circle_xy = _circle(circle)
+    if circle_xy is not None:
+        cx, cy = circle_xy
+        fig.add_trace(go.Scatter(
+            x=cx, y=cy, mode="lines", name="Circle boundary",
+            line=dict(color=CURVE_COLOR, width=2, dash="dash"),
+            hoverinfo="skip",
+        ))
     fig.update_xaxes(range=[0, 1], title_text="x", constrain="domain")
     fig.update_yaxes(range=[0, 1], title_text="y", scaleanchor="x",
                      constrain="domain")
