@@ -123,9 +123,6 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Open the URL Streamlit prints (usually http://localhost:8501), choose the
-settings in the sidebar, and click **Run Comparison**.
-
 Run the tests:
 
 ```bash
@@ -133,12 +130,3 @@ pip install -r requirements-dev.txt
 python -m pytest -q tests
 ```
 
-## Deploy to Streamlit Community Cloud
-
-1. Push the repository to GitHub with `app.py`, `miser.py`, `experiments.py`,
-   `visualization/` and `requirements.txt` at the root.
-2. Sign in at https://share.streamlit.io/ with GitHub and choose **Create app**.
-3. Select the repository, the branch (e.g. `main`) and the main file `app.py`.
-   In *Advanced settings*, pick Python 3.11 or 3.12.
-4. Click **Deploy** and use the generated `*.streamlit.app` URL for the
-   presentation.
