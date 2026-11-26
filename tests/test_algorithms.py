@@ -29,12 +29,14 @@ B01 = [[0.0, 1.0]]
 
 # ------------------------------------------------- backward compatibility
 @pytest.mark.parametrize("seed, mc_est, miser_est, n_splits", [
-    (42, 0.020995272947157837, 0.020054804966237755, 21),
-    (7, 0.020796691989287554, 0.020124908676613297, 22),
+    (42, 0.020995272947157837, 0.02007466001979587, 19),
+    (7, 0.020796691989287554, 0.020042315211501634, 20),
 ])
-def test_default_call_matches_original_implementation(seed, mc_est, miser_est,
-                                                      n_splits):
-    """Values recorded from the original app.py (commit a4b6e31)."""
+def test_default_call_regression(seed, mc_est, miser_est, n_splits):
+    """Plain MC: values from the original app.py (commit a4b6e31), unchanged.
+    MISER: values recorded after the shared/inherited pilot pool and the
+    (V·σ)^(2/3) allocation were introduced (the original MISER values no
+    longer apply by design)."""
     assert run_plain_monte_carlo(10_000, seed)["estimate"] == mc_est
     ms = run_miser(10_000, seed + 1, 300)
     assert ms["estimate"] == miser_est
@@ -98,7 +100,7 @@ def test_miser_tree_is_consistent():
         children = [nd for nd in nodes if nd["parent"] == ev["node_id"]]
         assert len(children) == 2
         assert by_id[ev["node_id"]]["count"] == (
-            ev["pilot_cost"] + sum(c["count"] for c in children))
+            ev["pilot_cost"] + sum(c["budget"] for c in children))
 
     # Production samples per leaf == leaf budget.
     prod = ms["points"][ms["kinds"] == 1, 0]

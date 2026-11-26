@@ -7,6 +7,15 @@ __pycache__/
 .venv/
 venv/
 
-# IDE (per-user state)
+# IDE (per-user state). .idea/vcs.xml is shared project config and stays tracked.
 .idea/workspace.xml
+.idea/shelf/
+.vscode/
+
+# Generated at startup: copied from the installed plotly package (visualization/live.py)
 visualization/live_component/plotly.min.js
+
+# Local logs, secrets and environment files
+*.log
+.env
+.streamlit/secrets.toml

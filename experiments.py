@@ -18,11 +18,11 @@ from miser import (
     UNIT_SQUARE,
     VILLAGE_X,
     VILLAGE_Y,
-    in_village,
     run_miser,
     run_plain_monte_carlo,
     village_density_points,
 )
+from scenarios import SCENARIOS
 
 # Sample sizes used by the convergence / error / performance sweeps.
 SWEEP_SIZES = (1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000)
@@ -43,16 +43,43 @@ class Integrand:
     fixed_bounds: Optional[tuple] = None
     circle: Optional[tuple] = None   # (cx, cy, r) drawn on 2D plots
     area_mode: bool = False          # f is a 0/1 indicator: integral = area
+    value_kind: str = "continuous"   # "circle" | "binary" | "continuous" (labels)
+    view3d: bool = False             # offer the 3-D surface view
 
 
-# Circle-area demo: the circle of the original project demo (miser.in_village),
-# centre (0.70, 0.30), radius 0.15, inside the unit square. Reference = π r².
-CIRCLE = (VILLAGE_X, VILLAGE_Y, VILLAGE_RADIUS)
+# Display labels per kind of integrand. The web app and the live player both
+# read these, so scenario-specific wording lives only here.
+LABELS = {
+    "circle": {
+        "one": "Inside circle", "zero": "Outside circle",
+        "estimate": "Final estimate (circle area)",
+        "reference": "Reference value (πr²)",
+        "how_mc": "inside / total × 1", "how_ms": "Σ region area × fraction",
+    },
+    "binary": {
+        "one": "Inside region", "zero": "Outside region",
+        "estimate": "Final estimate (area of the f = 1 region)",
+        "reference": "Reference value (exact integral)",
+        "how_mc": "inside / total × square area",
+        "how_ms": "Σ region area × fraction inside",
+    },
+    "continuous": {
+        "one": None, "zero": None, "value": "Function value",
+        "estimate": "Final estimate (integral of f)",
+        "reference": "Reference value (exact integral)",
+        "how_mc": "square area × mean f",
+        "how_ms": "Σ region area × mean f in region",
+    },
+}
+SAMPLE_LABELS = {"pilot": "Pilot sample", "production": "Sampling point"}
 
 
-def circle_indicator(points):
-    """1 if (x - cx)² + (y - cy)² ≤ r², else 0 (uses the original in_village)."""
-    return in_village(points).astype(float)
+def labels_for(integrand):
+    """Display labels for an integrand (see LABELS)."""
+    kind = getattr(integrand, "value_kind", None)
+    if kind not in LABELS:
+        kind = "binary" if getattr(integrand, "area_mode", False) else "continuous"
+    return {"kind": kind, **LABELS[kind], **SAMPLE_LABELS}
 
 
 def _ref_village(bounds):
@@ -105,17 +132,42 @@ INTEGRANDS = {
         fixed_bounds=UNIT_SQUARE,
         circle=(VILLAGE_X, VILLAGE_Y, VILLAGE_RADIUS),
     ),
-    "circle": Integrand(
-        "circle", "Circle area — points inside the circle (2D)", 2,
-        func=circle_indicator,
-        scalar=None,
-        reference=lambda b: math.pi * CIRCLE[2] ** 2,
-        reference_kind="Analytic circle area π·r² (r = 0.15)",
-        fixed_bounds=UNIT_SQUARE,
-        circle=CIRCLE,
-        area_mode=True,
-    ),
 }
+
+
+def _scenario_integrand(key, sc):
+    """Wrap a scenarios.SCENARIOS entry as an Integrand on the unit square."""
+    return Integrand(
+        key, sc["label"], 2, func=sc["func"], scalar=None,
+        reference=(lambda b, _f=sc["exact"]: _f()),
+        reference_kind="exact value (scenarios.py)",
+        fixed_bounds=UNIT_SQUARE, circle=sc["overlay"], area_mode=sc["binary"],
+        value_kind=sc["kind"], view3d=sc["view3d"])
+
+
+# Single registry used by the web app and the experiment runners: every
+# scenario (incl. the Gaussian peaks) goes through run_plain_monte_carlo /
+# run_miser via run_pair.
+SCENARIO_INTEGRANDS = {k: _scenario_integrand(k, sc) for k, sc in SCENARIOS.items()}
+# The circle scenario is also listed with the other integrands (one definition:
+# scenarios.circle, centre (0.70, 0.30), r = 0.15, reference πr²).
+INTEGRANDS["circle"] = SCENARIO_INTEGRANDS["circle"]
+
+
+def standard_error(result):
+    """Standard error of an algorithm result.
+
+    MISER reports its own (Σ V²s²/N over leaves). For plain MC it is
+    V · s / √N from the returned sample values (computed here so that the
+    plain MC algorithm itself stays unchanged).
+    """
+    if "std_error" in result:
+        return float(result["std_error"])
+    n = len(result["values"])
+    if n < 2:
+        return float("nan")
+    volume = float(np.prod([hi - lo for lo, hi in result["bounds"]]))
+    return volume * float(np.std(result["values"], ddof=1)) / math.sqrt(n)
 
 
 def make_bounds(integrand, a, b):
@@ -167,6 +219,7 @@ def sweep(integrand, bounds, seed, leaf_size, sizes=SWEEP_SIZES):
                 "n": n,
                 "estimate": res["estimate"],
                 "abs_error": abs(res["estimate"] - ref),
+                "std_error": standard_error(res),
                 "time": res["elapsed"],
                 "evaluations": res["evaluations"],
             })
@@ -184,11 +237,13 @@ def repeated(integrand, bounds, seed, leaf_size, repeats, sizes=SWEEP_SIZES):
     for n in sizes:
         est = {"Standard Monte Carlo": [], "MISER": []}
         times = {"Standard Monte Carlo": [], "MISER": []}
+        ses = {"Standard Monte Carlo": [], "MISER": []}
         for r in range(repeats):
             mc, ms = run_pair(integrand, bounds, n, seed + 1000 * (r + 1), leaf_size)
             for name, res in (("Standard Monte Carlo", mc), ("MISER", ms)):
                 est[name].append(res["estimate"])
                 times[name].append(res["elapsed"])
+                ses[name].append(standard_error(res))
         for name in est:
             e = np.asarray(est[name])
             err = e - ref
@@ -200,6 +255,7 @@ def repeated(integrand, bounds, seed, leaf_size, repeats, sizes=SWEEP_SIZES):
                 "mae": float(np.mean(np.abs(err))),
                 "rmse": float(np.sqrt(np.mean(err**2))),
                 "std": float(e.std(ddof=1)) if repeats > 1 else 0.0,
+                "mean_std_error": float(np.mean(ses[name])),
                 "mean_time": float(np.mean(times[name])),
             })
     return rows

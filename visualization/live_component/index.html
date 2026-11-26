@@ -28,10 +28,45 @@
   .legend i { display:inline-block; vertical-align:middle; margin-right:5px; }
   .legend i.dot { width:9px; height:9px; border-radius:50%; }
   .legend i.line { width:14px; height:0; border-top:2px solid; }
+  .legend i.grad { width:64px; height:8px; border-radius:2px; margin:0 4px; }
+  .legend svg { vertical-align:middle; margin-right:5px; }
+  /* playback controls (only control the replay of an already computed run) */
+  .ctrl { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; margin:0 0 10px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:8px; font-size:13px; }
+  .ctrl .grp { display:flex; align-items:center; gap:4px; }
+  .ctrl .lbl { color:var(--muted); font-size:12px; margin-right:2px; }
+  .ctrl button { font:inherit; font-size:12.5px; border:1px solid #d1d5db; background:#fff; color:#262730; border-radius:6px; padding:2px 9px; cursor:pointer; }
+  .ctrl button:hover:not(:disabled) { border-color:#ff4b4b; color:#ff4b4b; }
+  .ctrl button.on { background:#262730; border-color:#262730; color:#fff; }
+  .ctrl button:disabled { opacity:.45; cursor:default; }
+  .ctrl label { font-size:12px; color:#444; display:flex; align-items:center; gap:3px; }
+  .ctrl .prog { flex:1 1 200px; display:flex; align-items:center; gap:8px; min-width:180px; }
+  .ctrl .track { flex:1; height:6px; background:#eef0f3; border-radius:3px; overflow:hidden; }
+  .ctrl .track>div { height:100%; width:0; background:#6b7280; }
+  .ctrl .ptxt { color:#444; font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .ctrl .note { flex-basis:100%; color:var(--muted); font-size:11.5px; line-height:1.35; }
+  .hidden { display:none !important; }
   @media(max-width:700px) { .cols { grid-template-columns:1fr; gap:14px; } }
 </style>
 </head>
 <body>
+<div class="ctrl">
+  <div class="grp">
+    <button id="btn-play" title="Play / pause the replay">▶ Play</button>
+    <button id="btn-restart" title="Replay from the first sample">↺ Restart</button>
+  </div>
+  <div class="grp">
+    <span class="lbl">Speed</span>
+    <button data-speed="0.5">0.5×</button><button data-speed="1">1×</button><button data-speed="2">2×</button><button data-speed="4">4×</button>
+  </div>
+  <div class="grp hidden" id="grp-view">
+    <span class="lbl">View</span>
+    <button data-view="2d">2D</button><button data-view="3d">3D</button>
+    <button id="btn-cam" class="hidden" title="Restore the default 3-D camera">Reset 3D view</button>
+    <label id="lbl-sync" class="hidden"><input type="checkbox" id="chk-sync" checked> Sync cameras</label>
+  </div>
+  <div class="prog"><div class="track"><div id="prog-bar"></div></div><span class="ptxt" id="prog-txt"></span></div>
+  <div class="note" id="time-note"></div>
+</div>
 <div class="cols">
   <div class="panel mc">
     <div class="head"><h4 style="color:var(--mc)">Plain Monte Carlo</h4><span class="state" id="mc-state"></span></div>
@@ -45,929 +80,566 @@
   </div>
 </div>
 <script>
+// ======================================================================
+// Streamlit bridge
+// ======================================================================
 function send(type,data){
-  window.parent.postMessage(
-    Object.assign({isStreamlitMessage:true,type},data||{}),
-    "*"
-  );
+  window.parent.postMessage(Object.assign({isStreamlitMessage:true,type},data||{}),"*");
+}
+function setHeight(){
+  send("streamlit:setFrameHeight",{height:document.body.scrollHeight+6});
 }
 
-function setHeight(){
-  send("streamlit:setFrameHeight",{
-    height:document.body.scrollHeight+6
+const C={overlay:"#202020",current:"#c2410c",split:"rgba(160,82,45,.6)"};
+const BINARY={
+  mc:"rgba(31,119,180,0.78)", ms:"rgba(255,127,14,0.82)", zero:"rgba(148,163,184,0.48)",
+  // pilot crosses: same hue, opaque enough to read as a line
+  mcPilot:"rgba(21,84,128,0.95)", msPilot:"rgba(194,65,12,0.95)", zeroPilot:"rgba(71,85,105,0.85)"
+};
+const BINS=14;             // colour bins for continuous values (2-D canvas)
+const FLUSH_MS=110;        // 3-D: batch new samples into ≤ ~9 updates per second
+const MIN_DURATION=0.05;   // s; shortest playback of one algorithm at 1×
+const CAM_DEFAULT={eye:{x:1.55,y:-1.55,z:1.05},up:{x:0,y:0,z:1},center:{x:0,y:0,z:-0.1}};
+
+let D=null;        // payload of the current run
+let S=null;        // playback state of the current run
+let PM=null,PS=null;   // drawing panels (Plain MC / MISER)
+let rafId=null;
+let speed=1;
+let view="2d";
+let building=false, buildToken=0;
+let reportedRun=-1;
+let mcDuration=15, msDuration=15;   // playback seconds at 1×
+let syncing=false;
+
+const $=id=>document.getElementById(id);
+const fmtInt=x=>Math.round(x).toLocaleString("en-US");
+const fmt=(x,d=6)=>Number.isFinite(x)?Number(x).toFixed(d):"—";
+const fmtMs=s=>(s*1000).toFixed(s<0.01?3:2)+" ms";
+
+// ======================================================================
+// colours (one value range for both panels, 2-D and 3-D)
+// ======================================================================
+function valueT(v){
+  const [lo,hi]=D.vrange; const r=(hi-lo)||1;
+  return Math.max(0,Math.min(1,(v-lo)/r));
+}
+function hueColor(t,a){ return `hsla(${240*(1-t)},82%,48%,${a})`; }
+const COLORSCALE=Array.from({length:9},(_,i)=>[i/8,hueColor(i/8,1)]);
+
+function binOf(v){
+  if(D.binary) return v>=0.5?1:0;
+  return Math.min(BINS-1,Math.floor(valueT(v)*BINS));
+}
+function binColor(key,b,pilot){
+  if(D.binary){
+    if(b===1) return pilot?BINARY[key+"Pilot"]:BINARY[key];
+    return pilot?BINARY.zeroPilot:BINARY.zero;
+  }
+  return hueColor((b+.5)/BINS,pilot?0.95:0.82);
+}
+
+// ======================================================================
+// 2-D panel (Plotly axes + canvas layers, unchanged look)
+// ======================================================================
+const LAYOUT2D=()=>{
+  const [[x0,x1],[y0,y1]]=D.bounds;
+  return {
+    margin:{l:40,r:10,t:8,b:36}, showlegend:false, dragmode:false,
+    xaxis:{range:[x0,x1],title:{text:"X",standoff:4},zeroline:false,fixedrange:true,constrain:"domain",dtick:.2},
+    yaxis:{range:[y0,y1],title:{text:"Y",standoff:4},zeroline:false,fixedrange:true,scaleanchor:"x",constrain:"domain",dtick:.2},
+    plot_bgcolor:"#fff", paper_bgcolor:"rgba(0,0,0,0)"
+  };
+};
+const CFG2D={displayModeBar:false,responsive:true};
+
+function makeLayers(key){
+  const wrap=$(key+"-wrap"); const layers={};
+  for(const name of ["splits","points","top"]){
+    const c=document.createElement("canvas"); c.className="layer";
+    wrap.appendChild(c); layers[name]=c;
+  }
+  return layers;
+}
+function fitPanel(P){
+  const xa=P.gd._fullLayout.xaxis, ya=P.gd._fullLayout.yaxis;
+  const dpr=window.devicePixelRatio||1, W=P.gd.clientWidth, H=P.gd.clientHeight;
+  for(const c of Object.values(P.layers)){
+    c.width=Math.round(W*dpr); c.height=Math.round(H*dpr);
+    c.style.width=W+"px"; c.style.height=H+"px";
+    const ctx=c.getContext("2d");
+    ctx.setTransform(dpr,0,0,dpr,0,0); ctx.beginPath();
+    ctx.rect(xa._offset,ya._offset,xa._length,ya._length); ctx.clip();
+  }
+  const [[x0,x1],[y0,y1]]=D.bounds;
+  P.map={
+    px:x=>xa._offset+(x-x0)/(x1-x0)*xa._length,
+    py:y=>ya._offset+(1-(y-y0)/(y1-y0))*ya._length,
+    scale:xa._length/(x1-x0)
+  };
+}
+function clearLayer(c){
+  const ctx=c.getContext("2d");
+  ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,c.width,c.height); ctx.restore();
+}
+function dot(ctx,x,y,r){ ctx.moveTo(x+r,y); ctx.arc(x,y,r,0,6.2832); }
+function cross(ctx,x,y,r){ ctx.moveTo(x-r,y-r); ctx.lineTo(x+r,y+r); ctx.moveTo(x-r,y+r); ctx.lineTo(x+r,y-r); }
+
+// Samples [from, to) in evaluation order: production = dot, pilot (kind 0) = ✕.
+function paintPoints(P,src,from,to){
+  if(to<=from) return;
+  const ctx=P.layers.points.getContext("2d"), m=P.map;
+  const r=Math.max(1.25,Math.min(2.15,9000/Math.max(D.n,1)));
+  const nb=D.binary?2:BINS, kind=src.kind;
+  const groups=Array.from({length:2*nb},()=>[]);
+  for(let i=from;i<to;i++){
+    const pilot=kind!==undefined&&kind[i]===0;
+    groups[(pilot?nb:0)+binOf(src.v[i])].push(i);
+  }
+  for(let b=0;b<nb;b++){
+    const g=groups[b]; if(!g.length) continue;
+    ctx.fillStyle=binColor(P.key,b,false); ctx.beginPath();
+    for(const i of g) dot(ctx,m.px(src.x[i]),m.py(src.y[i]),r);
+    ctx.fill();
+  }
+  ctx.lineWidth=1.15;
+  for(let b=0;b<nb;b++){
+    const g=groups[nb+b]; if(!g.length) continue;
+    ctx.strokeStyle=binColor(P.key,b,true); ctx.beginPath();
+    for(const i of g) cross(ctx,m.px(src.x[i]),m.py(src.y[i]),r+1.1);
+    ctx.stroke();
+  }
+}
+function paintSplits(P,from,to){
+  const ctx=P.layers.splits.getContext("2d"), m=P.map;
+  for(let i=from;i<to;i++){
+    const s=D.ms.splits[i], depth=s[5];
+    ctx.strokeStyle=`rgba(160,82,45,${Math.max(.18,.6-.06*depth)})`;
+    ctx.lineWidth=depth<2?1.2:.8;
+    ctx.beginPath(); ctx.moveTo(m.px(s[1]),m.py(s[2])); ctx.lineTo(m.px(s[3]),m.py(s[4])); ctx.stroke();
+  }
+}
+function paintTop(P){
+  const c=P.layers.top, ctx=c.getContext("2d"), m=P.map;
+  clearLayer(c);
+  if(D.overlay&&D.overlay.length>=3){
+    const [cx,cy,r]=D.overlay;
+    ctx.strokeStyle=C.overlay; ctx.lineWidth=1.8; ctx.setLineDash(D.binary?[]:[5,4]);
+    ctx.beginPath(); ctx.arc(m.px(cx),m.py(cy),Math.abs(r)*m.scale,0,6.2832); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if(P.key==="ms"&&S&&S.curLeaf>=0){
+    const l=D.ms.leaves[S.curLeaf];
+    ctx.strokeStyle=C.current; ctx.lineWidth=1.4; ctx.setLineDash([4,3]);
+    ctx.strokeRect(m.px(l[3]),m.py(l[6]),m.px(l[4])-m.px(l[3]),m.py(l[5])-m.py(l[6]));
+    ctx.setLineDash([]);
+  }
+}
+function draw2D(P,src,shown){
+  paintPoints(P,src,P.drawn,shown); P.drawn=shown;
+  if(P.key==="ms"){
+    if(S.splitPtr>P.splitsDrawn){ paintSplits(P,P.splitsDrawn,S.splitPtr); P.splitsDrawn=S.splitPtr; }
+    if(S.topDirty){ paintTop(P); S.topDirty=false; }
+  }
+}
+
+// ======================================================================
+// 3-D panel (static surface from the scenario's own f + incremental samples)
+// ======================================================================
+function zRange(){ const [lo,hi]=D.vrange; return [Math.min(0,lo),hi+0.05*((hi-lo)||1)]; }
+function traces3D(key){
+  const sf=D.surface, [lo,hi]=D.vrange, L=D.labels;
+  const marker=(size,symbol)=>({size,symbol,color:[],colorscale:COLORSCALE,cmin:lo,cmax:hi,line:{width:0}});
+  const hov=name=>`x=%{x:.4f}<br>y=%{y:.4f}<br>f=%{z:.5f}<extra>${name}</extra>`;
+  const t=[
+    {type:"surface",x:sf.x,y:sf.y,z:sf.z,colorscale:COLORSCALE,cmin:lo,cmax:hi,opacity:0.55,
+     showscale:true,colorbar:{title:{text:"f(x, y)",side:"right"},len:0.6,thickness:10,x:0.98},
+     hovertemplate:"x=%{x:.4f}<br>y=%{y:.4f}<br>f=%{z:.5f}<extra>surface</extra>"},
+    {type:"scatter3d",mode:"markers",name:L.production,x:[],y:[],z:[],marker:marker(1.6,"circle"),hovertemplate:hov(L.production)}
+  ];
+  if(key==="ms"){
+    t.push({type:"scatter3d",mode:"markers",name:L.pilot,x:[],y:[],z:[],marker:marker(2.4,"x"),hovertemplate:hov(L.pilot)});
+    // (empty marker.color so the combined extendTraces call can include it)
+    t.push({type:"scatter3d",mode:"lines",name:"MISER split",x:[],y:[],z:[],marker:{color:[]},line:{color:"rgba(160,82,45,.85)",width:3},hoverinfo:"skip"});
+  }
+  return t;
+}
+function layout3D(){
+  const [[x0,x1],[y0,y1]]=D.bounds;
+  return {
+    margin:{l:0,r:0,t:0,b:0}, showlegend:false, paper_bgcolor:"rgba(0,0,0,0)", uirevision:"keep",
+    scene:{
+      xaxis:{range:[x0,x1],title:{text:"X"}}, yaxis:{range:[y0,y1],title:{text:"Y"}},
+      zaxis:{range:zRange(),title:{text:"f"}},
+      aspectmode:"manual", aspectratio:{x:1,y:1,z:0.7}, camera:CAM_DEFAULT
+    }
+  };
+}
+const CFG3D={displayModeBar:true,displaylogo:false,responsive:true,
+  modeBarButtonsToRemove:["toImage","resetCameraLastSave3d","hoverClosest3d"]};
+
+// Plotly re-processes every point of a scatter3d trace on each update
+// (~10 µs per point measured), so updates are batched: one extendTraces call
+// per panel, never two at once, and at most one every 2.5 × the last update's
+// cost. Order and completeness are unchanged; large runs refresh less often.
+function flush3D(P,src,shown,force){
+  if(P.flushing){ if(force) P.pendingForce=true; return; }
+  const now=performance.now();
+  const pendingSplits=P.key==="ms"&&S.splitPtr>P.splitsDrawn;
+  if(shown<=P.drawn&&!pendingSplits) return;
+  if(!force&&now-P.lastFlush<P.minGap) return;
+  const kind=src.kind;
+  const a={x:[],y:[],z:[]}, b={x:[],y:[],z:[]};
+  for(let i=P.drawn;i<shown;i++){
+    const t=(kind!==undefined&&kind[i]===0)?b:a;
+    t.x.push(src.x[i]); t.y.push(src.y[i]); t.z.push(src.v[i]);
+  }
+  let upd, idx;
+  if(P.key==="ms"){
+    const z0=zRange()[0], X=[],Y=[],Z=[];
+    for(let i=P.splitsDrawn;i<S.splitPtr;i++){
+      const s=D.ms.splits[i];
+      X.push(s[1],s[3],null); Y.push(s[2],s[4],null); Z.push(z0,z0,null);
+    }
+    upd={x:[a.x,b.x,X],y:[a.y,b.y,Y],z:[a.z,b.z,Z],"marker.color":[a.z,b.z,[]]}; idx=[1,2,3];
+    P.splitsDrawn=S.splitPtr;
+  }else{
+    upd={x:[a.x],y:[a.y],z:[a.z],"marker.color":[a.z]}; idx=[1];
+  }
+  P.drawn=shown;
+  P.flushing=true;
+  const t0=performance.now();
+  Promise.resolve(Plotly.extendTraces(P.gd,upd,idx)).catch(()=>{}).then(()=>{
+    const end=performance.now();
+    P.minGap=Math.max(FLUSH_MS,2.5*(end-t0));
+    P.lastFlush=end; P.flushing=false;
+    if(P.pendingForce&&S&&(P===PM||P===PS)){
+      P.pendingForce=false;
+      flush3D(P,P.key==="mc"?D.mc:D.ms,P.key==="mc"?S.mcShown:S.msShown,true);
+    }
+  });
+}
+function attachCameraSync(P){
+  P.gd.on("plotly_relayout",ev=>{
+    if(syncing||!$("chk-sync").checked) return;
+    const cam=ev["scene.camera"]; if(!cam) return;
+    const other=P.key==="mc"?PS:PM;
+    if(!other||other.mode!=="3d") return;
+    syncing=true;
+    Plotly.relayout(other.gd,{"scene.camera":cam}).finally(()=>{syncing=false;});
   });
 }
 
-const C={
-  mc:"#1f77b4",
-  ms:"#ff7f0e",
-  overlay:"#202020",
-  current:"#c2410c"
-};
+// ======================================================================
+// panels: (re)build without touching the playback state
+// ======================================================================
+function currentMode(){ return view==="3d"&&D&&D.surface?"3d":"2d"; }
 
-const BINARY={
-  mc:"rgba(31,119,180,0.78)",
-  ms:"rgba(255,127,14,0.82)",
-  zero:"rgba(148,163,184,0.48)"
-};
-
-let D=null;
-let S=null;
-let rafId=null;
-let PM=null;
-let PS=null;
-
-// 알고리즘별 애니메이션 재생 시간
-let mcDuration=15;
-let msDuration=15;
-
-const $=id=>document.getElementById(id);
-
-const fmtInt=x=>Math.round(x).toLocaleString("en-US");
-
-const fmt=(x,d=6)=>
-  Number.isFinite(x)?Number(x).toFixed(d):"—";
-
-const LAYOUT=()=>({
-  margin:{l:40,r:10,t:8,b:36},
-  showlegend:false,
-  dragmode:false,
-  xaxis:{
-    range:[0,1],
-    title:{text:"X",standoff:4},
-    zeroline:false,
-    fixedrange:true,
-    constrain:"domain",
-    dtick:.2
-  },
-  yaxis:{
-    range:[0,1],
-    title:{text:"Y",standoff:4},
-    zeroline:false,
-    fixedrange:true,
-    scaleanchor:"x",
-    constrain:"domain",
-    dtick:.2
-  },
-  plot_bgcolor:"#fff",
-  paper_bgcolor:"rgba(0,0,0,0)"
-});
-
-const CFG={
-  displayModeBar:false,
-  responsive:true
-};
-
-function makePanel(key){
-  const wrap=$(key+"-wrap");
-
-  wrap.querySelectorAll("canvas").forEach(c=>c.remove());
-
-  const layers={};
-
-  for(const name of ["splits","points","top"]){
-    const c=document.createElement("canvas");
-    c.className="layer";
-    wrap.appendChild(c);
-    layers[name]=c;
+function buildPanel(key,mode){
+  const gd=$(key+"-plot");
+  Plotly.purge(gd);                                       // drops old traces + listeners
+  $(key+"-wrap").querySelectorAll("canvas").forEach(c=>c.remove());
+  const P={key,gd,mode,drawn:0,splitsDrawn:0,lastFlush:0,minGap:FLUSH_MS,
+           flushing:false,pendingForce:false,layers:null,map:null};
+  if(mode==="2d"){
+    return Plotly.newPlot(gd,[],LAYOUT2D(),CFG2D).then(()=>{
+      P.layers=makeLayers(key); fitPanel(P); return P;
+    });
   }
-
-  return {
-    key,
-    gd:$(key+"-plot"),
-    layers,
-    map:null,
-    painted:0
-  };
+  return Plotly.newPlot(gd,traces3D(key),layout3D(),CFG3D).then(()=>{
+    attachCameraSync(P); return P;
+  });
 }
 
-function fitPanel(P){
-  const xa=P.gd._fullLayout.xaxis;
-  const ya=P.gd._fullLayout.yaxis;
-
-  const dpr=window.devicePixelRatio||1;
-  const W=P.gd.clientWidth;
-  const H=P.gd.clientHeight;
-
-  for(const c of Object.values(P.layers)){
-    c.width=Math.round(W*dpr);
-    c.height=Math.round(H*dpr);
-
-    c.style.width=W+"px";
-    c.style.height=H+"px";
-
-    const ctx=c.getContext("2d");
-
-    ctx.setTransform(dpr,0,0,dpr,0,0);
-    ctx.beginPath();
-    ctx.rect(
-      xa._offset,
-      ya._offset,
-      xa._length,
-      ya._length
-    );
-    ctx.clip();
-  }
-
-  P.map={
-    px:x=>xa._offset+x*xa._length,
-    py:y=>ya._offset+(1-y)*ya._length,
-    scale:xa._length
-  };
-
-  P.painted=0;
+// Rebuilds both panels in the current view and redraws everything already
+// shown, so switching 2-D / 3-D or resizing keeps the playback position.
+function buildPanels(){
+  const token=++buildToken, mode=currentMode();
+  building=true;
+  return Promise.all([buildPanel("mc",mode),buildPanel("ms",mode)]).then(([pm,ps])=>{
+    if(token!==buildToken) return false;                  // a newer build / run won
+    PM=pm; PS=ps; building=false;
+    if(S) S.topDirty=true;
+    if(mode==="2d"){ paintTop(PM); paintTop(PS); }
+    draw(true);
+    legends(); controls(); setHeight();
+    return true;
+  });
 }
 
-function clearLayer(c){
-  const ctx=c.getContext("2d");
-
-  ctx.save();
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,c.width,c.height);
-  ctx.restore();
-}
-
-function dot(ctx,x,y,r){
-  ctx.moveTo(x+r,y);
-  ctx.arc(x,y,r,0,6.2832);
-}
-
-function valueColor(t,key){
-  const hue=240*(1-Math.max(0,Math.min(1,t)));
-  return `hsla(${hue},82%,48%,0.82)`;
-}
-
-function paintPoints(P,src,from,to){
-  if(to<=from)return;
-
-  P.painted+=to-from;
-
-  const ctx=P.layers.points.getContext("2d");
-  const m=P.map;
-
-  const r=Math.max(
-    1.25,
-    Math.min(2.15,9000/Math.max(D.n,1))
-  );
-
-  if(D.binary){
-
-    ctx.fillStyle=BINARY.zero;
-    ctx.beginPath();
-
-    for(let i=from;i<to;i++){
-      if(src.v[i]<0.5){
-        dot(
-          ctx,
-          m.px(src.x[i]),
-          m.py(src.y[i]),
-          r
-        );
-      }
-    }
-
-    ctx.fill();
-
-    ctx.fillStyle=BINARY[P.key];
-    ctx.beginPath();
-
-    for(let i=from;i<to;i++){
-      if(src.v[i]>=0.5){
-        dot(
-          ctx,
-          m.px(src.x[i]),
-          m.py(src.y[i]),
-          r
-        );
-      }
-    }
-
-    ctx.fill();
-
-  }else{
-
-    const lo=src.value_min;
-    const hi=src.value_max;
-    const range=(hi-lo)||1;
-
-    const bins=14;
-
-    const groups=Array.from(
-      {length:bins},
-      ()=>[]
-    );
-
-    for(let i=from;i<to;i++){
-      const b=Math.min(
-        bins-1,
-        Math.max(
-          0,
-          Math.floor((src.v[i]-lo)/range*bins)
-        )
-      );
-
-      groups[b].push(i);
-    }
-
-    for(let b=0;b<bins;b++){
-
-      if(!groups[b].length)continue;
-
-      ctx.fillStyle=valueColor(
-        (b+.5)/bins,
-        P.key
-      );
-
-      ctx.beginPath();
-
-      for(const i of groups[b]){
-        dot(
-          ctx,
-          m.px(src.x[i]),
-          m.py(src.y[i]),
-          r
-        );
-      }
-
-      ctx.fill();
-    }
+function draw(force){
+  if(building||!PM||!PS||!S) return;
+  for(const [P,src,shown] of [[PM,D.mc,S.mcShown],[PS,D.ms,S.msShown]]){
+    if(P.mode==="2d") draw2D(P,src,shown); else flush3D(P,src,shown,force);
   }
 }
 
-function paintSplits(from,to){
-  const ctx=PS.layers.splits.getContext("2d");
-  const m=PS.map;
-
-  for(let i=from;i<to;i++){
-
-    const s=D.ms.splits[i];
-    const depth=s[5];
-
-    ctx.strokeStyle=
-      `rgba(160,82,45,${Math.max(.18,.6-.06*depth)})`;
-
-    ctx.lineWidth=depth<2?1.2:.8;
-
-    ctx.beginPath();
-
-    ctx.moveTo(
-      m.px(s[1]),
-      m.py(s[2])
-    );
-
-    ctx.lineTo(
-      m.px(s[3]),
-      m.py(s[4])
-    );
-
-    ctx.stroke();
-  }
-}
-
-function paintTop(P){
-  const c=P.layers.top;
-  const ctx=c.getContext("2d");
-  const m=P.map;
-
-  clearLayer(c);
-
-  if(D.overlay&&D.overlay.length>=3){
-
-    const [cx,cy,r]=D.overlay;
-
-    ctx.strokeStyle=C.overlay;
-    ctx.lineWidth=1.8;
-
-    ctx.setLineDash(D.binary?[]:[5,4]);
-
-    ctx.beginPath();
-
-    ctx.arc(
-      m.px(cx),
-      m.py(cy),
-      Math.abs(r)*m.scale,
-      0,
-      6.2832
-    );
-
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
-
-  if(P.key==="ms"&&S&&S.curLeaf>=0){
-
-    const l=D.ms.leaves[S.curLeaf];
-
-    ctx.strokeStyle=C.current;
-    ctx.lineWidth=1.4;
-    ctx.setLineDash([4,3]);
-
-    ctx.strokeRect(
-      m.px(l[3]),
-      m.py(l[6]),
-      m.px(l[4])-m.px(l[3]),
-      m.py(l[5])-m.py(l[6])
-    );
-
-    ctx.setLineDash([]);
-  }
-}
-
-function legendFor(key){
-
-  const item=(cls,color,label)=>
-    `<span><i class="${cls}" style="${
-      cls==="dot"?"background":"border-top-color"
-    }:${color}"></i>${label}</span>`;
-
-  if(D.binary){
-
-    return item("dot",BINARY[key],"f = 1")
-      +item("dot",BINARY.zero,"f = 0")
-      +(D.overlay?item("line",C.overlay,"Boundary"):"")
-      +(key==="ms"
-        ?item("line","rgba(160,82,45,.6)","MISER split")
-         +item("line",C.current,"Current region")
-        :"");
-  }
-
-  return item("dot","#244bd6","Lower value")
-    +item("dot","#e3c52a","Mid value")
-    +item("dot","#d62728","Higher value")
-    +(D.overlay?item("line",C.overlay,"Reference guide"):"")
-    +(key==="ms"
-      ?item("line","rgba(160,82,45,.6)","MISER split")
-       +item("line",C.current,"Current region")
-      :"");
-}
-
-function legends(){
-  $("mc-legend").innerHTML=legendFor("mc");
-  $("ms-legend").innerHTML=legendFor("ms");
-}
-
-// 알고리즘별 상태를 독립적으로 관리
+// ======================================================================
+// playback state
+// ======================================================================
 function freshState(){
-
   return {
-
-    mcShown:0,
-    msShown:0,
-
-    mcProgress:0,
-    msProgress:0,
-
-    lastTs:null,
-
-    mcDone:false,
-    msDone:false,
-
-    done:false,
-    playing:false,
-    reported:false,
-
-    mcSum:0,
-    msSum:0,
-
-    mcOnes:0,
-    msOnes:0,
-
-    leafPtr:0,
-    curLeaf:-1,
-
-    curSum:0,
-    curCount:0,
-    curArea:0,
-
-    doneSum:0,
-    doneArea:0,
-
-    leavesDone:0,
-
-    splitPtr:0,
-    nodePtr:0,
-
-    depth:0,
-    maxDepth:0
+    clock:0, lastTs:null, playing:false, done:false, started:false,
+    mcShown:0, msShown:0, mcDone:false, msDone:false,
+    mcSum:0, mcOnes:0, msOnes:0, msPilot:0,
+    leafPtr:0, curLeaf:-1, curSum:0, curCount:0, curArea:0,
+    doneSum:0, doneArea:0, leavesDone:0,
+    splitPtr:0, nodePtr:0, depth:0, maxDepth:0, topDirty:true
   };
+}
+
+function advanceMC(to){
+  const mc=D.mc;
+  for(let i=S.mcShown;i<to;i++){ S.mcSum+=mc.v[i]; if(mc.v[i]>=0.5) S.mcOnes++; }
+  S.mcShown=Math.max(S.mcShown,to);
+  if(S.mcShown>=D.n) S.mcDone=true;
 }
 
 function finishLeaf(){
-
   const l=D.ms.leaves[S.curLeaf];
-
-  S.doneSum+=l[8];
-  S.doneArea+=l[2];
-
-  S.leavesDone++;
-
-  S.curLeaf=-1;
-
-  S.curSum=0;
-  S.curCount=0;
-  S.curArea=0;
+  S.doneSum+=l[8]; S.doneArea+=l[2]; S.leavesDone++;
+  S.curLeaf=-1; S.curSum=0; S.curCount=0; S.curArea=0; S.topDirty=true;
 }
-
-// --------------------------------------------------
-// Monte Carlo 전용 진행 함수
-// --------------------------------------------------
-
-function advanceMC(to){
-
-  const from=S.mcShown;
-
-  if(to<=from)return;
-
-  const mc=D.mc;
-
-  for(let i=from;i<to;i++){
-
-    S.mcSum+=mc.v[i];
-
-    if(mc.v[i]>=0.5){
-      S.mcOnes++;
-    }
-  }
-
-  paintPoints(PM,mc,from,to);
-
-  S.mcShown=to;
-
-  if(S.mcShown>=D.n){
-    S.mcDone=true;
-  }
-}
-
-// --------------------------------------------------
-// MISER 전용 진행 함수
-// --------------------------------------------------
-
 function advanceMS(to){
-
-  const from=S.msShown;
-
-  if(to<=from)return;
-
-  const ms=D.ms;
-  const L=ms.leaves;
-
-  let topDirty=false;
-
-  for(let i=from;i<to;i++){
-
-    // MISER 전체 표본 합계
-    S.msSum+=ms.v[i];
-
-    if(ms.v[i]>=0.5){
-      S.msOnes++;
+  const ms=D.ms, L=ms.leaves;
+  for(let i=S.msShown;i<to;i++){
+    if(ms.v[i]>=0.5) S.msOnes++;
+    if(ms.kind[i]===0) S.msPilot++;
+    if(S.curLeaf>=0&&i>=L[S.curLeaf][0]+L[S.curLeaf][1]) finishLeaf();
+    if(S.leafPtr<L.length&&i>=L[S.leafPtr][0]){
+      S.curLeaf=S.leafPtr++; S.curSum=0; S.curCount=0; S.curArea=L[S.curLeaf][2]; S.topDirty=true;
     }
-
-    // 현재 leaf의 표본 처리가 끝났는지 확인
-    if(
-      S.curLeaf>=0 &&
-      i>=L[S.curLeaf][0]+L[S.curLeaf][1]
-    ){
-
-      finishLeaf();
-      topDirty=true;
-    }
-
-    // 다음 leaf 진입
-    if(
-      S.leafPtr<L.length &&
-      i>=L[S.leafPtr][0]
-    ){
-
-      S.curLeaf=S.leafPtr++;
-
-      S.curSum=0;
-      S.curCount=0;
-      S.curArea=L[S.curLeaf][2];
-
-      topDirty=true;
-    }
-
-    // MISER의 실제 생산 표본만 leaf 통계에 반영
-    if(ms.kind[i]===1&&S.curLeaf>=0){
-
-      S.curSum+=ms.v[i];
-      S.curCount++;
-    }
+    // only production samples of the current leaf enter its running estimate
+    if(ms.kind[i]===1&&S.curLeaf>=0){ S.curSum+=ms.v[i]; S.curCount++; }
   }
-
-  // 마지막 leaf 종료 확인
-  if(
-    S.curLeaf>=0 &&
-    to>=L[S.curLeaf][0]+L[S.curLeaf][1]
-  ){
-
-    finishLeaf();
-    topDirty=true;
+  if(to>S.msShown) S.msShown=to;
+  if(S.curLeaf>=0&&S.msShown>=L[S.curLeaf][0]+L[S.curLeaf][1]) finishLeaf();
+  // a split line appears once the pilot samples that decided it were evaluated
+  while(S.splitPtr<ms.splits.length&&ms.splits[S.splitPtr][0]<=S.msShown) S.splitPtr++;
+  while(S.nodePtr<ms.nodes.length&&ms.nodes[S.nodePtr][0]<=S.msShown){
+    S.depth=ms.nodes[S.nodePtr][1]; S.maxDepth=Math.max(S.maxDepth,S.depth); S.nodePtr++;
   }
-
-  // MISER 표본 그리기
-  paintPoints(PS,ms,from,to);
-
-  // MISER 분할선 그리기
-  const sp=S.splitPtr;
-
-  while(
-    S.splitPtr<ms.splits.length &&
-    ms.splits[S.splitPtr][0]<=to
-  ){
-
-    S.splitPtr++;
-  }
-
-  if(S.splitPtr>sp){
-    paintSplits(sp,S.splitPtr);
-  }
-
-  // MISER 노드 깊이 갱신
-  while(
-    S.nodePtr<ms.nodes.length &&
-    ms.nodes[S.nodePtr][0]<=to
-  ){
-
-    S.depth=ms.nodes[S.nodePtr][1];
-
-    S.maxDepth=Math.max(
-      S.maxDepth,
-      S.depth
-    );
-
-    S.nodePtr++;
-  }
-
-  if(topDirty){
-    paintTop(PS);
-  }
-
-  S.msShown=to;
-
-  if(S.msShown>=D.n){
-    S.msDone=true;
-  }
+  if(S.msShown>=D.n) S.msDone=true;
 }
 
-function chip(k,v){
-
-  return `<div title="${k}: ${v}">
-    <span class="k">${k}</span>
-    <span class="v">${v}</span>
-  </div>`;
+function targetFor(duration){
+  if(S.clock>=duration) return D.n;
+  return Math.min(D.n,Math.floor(D.n*S.clock/duration));
 }
-
-// --------------------------------------------------
-// 통계 표시: Monte Carlo와 MISER 각각 계산
-// --------------------------------------------------
-
-function paintStats(){
-
-  const n=D.n;
-
-  const mcK=S.mcShown;
-  const msK=S.msShown;
-
-  const mcPct=n?100*mcK/n:0;
-  const msPct=n?100*msK/n:0;
-
-  $("mc-state").textContent=
-    S.mcDone?"Finished":"Sampling…";
-
-  $("ms-state").textContent=
-    S.msDone?"Finished":"Sampling…";
-
-  $("mc-bar").style.width=mcPct+"%";
-  $("ms-bar").style.width=msPct+"%";
-
-  const mcEst=S.mcDone
-    ?D.mc.estimate
-    :(mcK?S.mcSum/mcK:NaN);
-
-  const curPart=S.curCount
-    ?S.curArea*S.curSum/S.curCount
-    :0;
-
-  const covered=S.doneArea+
-    (S.curCount?S.curArea:0);
-
-  const msEst=S.msDone
-    ?D.ms.estimate
-    :(covered>0?S.doneSum+curPart:NaN);
-
-  if(D.binary){
-
-    $("mc-chips").innerHTML=
-      chip("Samples",`${fmtInt(mcK)} / ${fmtInt(n)}`)
-      +chip("Progress",mcPct.toFixed(1)+"%")
-      +chip("f = 1",fmtInt(S.mcOnes))
-      +chip("f = 0",fmtInt(mcK-S.mcOnes))
-      +chip("Estimate",fmt(mcEst))
-      +chip("Reference",fmt(D.reference));
-
-    $("ms-chips").innerHTML=
-      chip("Samples",`${fmtInt(msK)} / ${fmtInt(n)}`)
-      +chip("Progress",msPct.toFixed(1)+"%")
-      +chip("f = 1",fmtInt(S.msOnes))
-      +chip("f = 0",fmtInt(msK-S.msOnes))
-      +chip("Estimate",fmt(msEst))
-      +chip("Depth",`${S.depth} (max ${S.maxDepth})`);
-
-  }else{
-
-    const meanMC=mcK?S.mcSum/mcK:NaN;
-    const meanMS=msK?S.msSum/msK:NaN;
-
-    $("mc-chips").innerHTML=
-      chip("Samples",`${fmtInt(mcK)} / ${fmtInt(n)}`)
-      +chip("Progress",mcPct.toFixed(1)+"%")
-      +chip("Running mean",fmt(meanMC))
-      +chip("Final estimate",fmt(mcEst))
-      +chip("Reference",fmt(D.reference))
-      +chip("Elapsed",fmt(D.mc.elapsed,3)+" s");
-
-    $("ms-chips").innerHTML=
-      chip("Samples",`${fmtInt(msK)} / ${fmtInt(n)}`)
-      +chip("Progress",msPct.toFixed(1)+"%")
-      +chip("Running mean",fmt(meanMS))
-      +chip("Final estimate",fmt(msEst))
-      +chip("Depth",`${S.depth} (max ${S.maxDepth})`)
-      +chip("Elapsed",fmt(D.ms.elapsed,3)+" s");
-  }
+function step(force){
+  advanceMC(targetFor(mcDuration));
+  advanceMS(targetFor(msDuration));
+  draw(force);
+  paintStats();
 }
-
-// --------------------------------------------------
-// 독립적인 애니메이션 진행
-// --------------------------------------------------
 
 function tick(ts){
-
   rafId=null;
-
-  if(!S.playing)return;
-
-  if(S.lastTs!==null){
-
-    const dt=Math.min(ts-S.lastTs,250)/1000;
-
-    // Monte Carlo 독립 진행
-    if(!S.mcDone){
-
-      S.mcProgress+=dt*D.n/mcDuration;
-
-      const mcTarget=Math.min(
-        D.n,
-        Math.floor(S.mcProgress)
-      );
-
-      if(mcTarget>S.mcShown){
-        advanceMC(mcTarget);
-      }
-    }
-
-    // MISER 독립 진행
-    if(!S.msDone){
-
-      S.msProgress+=dt*D.n/msDuration;
-
-      const msTarget=Math.min(
-        D.n,
-        Math.floor(S.msProgress)
-      );
-
-      if(msTarget>S.msShown){
-        advanceMS(msTarget);
-      }
-    }
-  }
-
+  if(!S||!S.playing) return;
+  if(S.lastTs!==null) S.clock+=Math.min(ts-S.lastTs,250)/1000*speed;
   S.lastTs=ts;
+  step(false);
+  if(S.mcDone&&S.msDone){ finish(); return; }
+  rafId=requestAnimationFrame(tick);
+}
+function stopTimer(){ if(rafId!==null){ cancelAnimationFrame(rafId); rafId=null; } }
 
-  paintStats();
-
-  // 두 알고리즘이 모두 끝나야 전체 종료
-  if(S.mcDone&&S.msDone){
-
-    S.done=true;
-    S.playing=false;
-
-    if(!S.reported){
-
-      S.reported=true;
-
-      send("streamlit:setComponentValue",{
-        value:D.run_id,
-        dataType:"json"
-      });
-    }
-
-    return;
-  }
-
-  if(S.playing){
-    rafId=requestAnimationFrame(tick);
+function finish(){
+  S.done=true; S.playing=false; stopTimer();
+  draw(true); paintStats(); controls();
+  // tell Streamlit once per run that the replay completed (reveals statistics)
+  if(reportedRun!==D.run_id){
+    reportedRun=D.run_id;
+    send("streamlit:setComponentValue",{value:D.run_id,dataType:"json"});
   }
 }
 
-// --------------------------------------------------
-// 실행 시간 비율에 따른 재생 시간 설정
-// --------------------------------------------------
-
-function setPlaybackDurations(){
-
-  const mcElapsed=Math.max(
-    Number(D.mc.elapsed)||0,
-    0.000001
-  );
-
-  const msElapsed=Math.max(
-    Number(D.ms.elapsed)||0,
-    0.000001
-  );
-
-  const maxElapsed=Math.max(
-    mcElapsed,
-    msElapsed
-  );
-
-  const totalDuration=Math.max(
-    Number(D.seconds)||15,
-    1
-  );
-
-  // 실제 실행 시간이 더 긴 알고리즘은
-  // 전체 애니메이션 시간만큼 재생
-  mcDuration=Math.max(
-    0.05,
-    totalDuration*mcElapsed/maxElapsed
-  );
-
-  msDuration=Math.max(
-    0.05,
-    totalDuration*msElapsed/maxElapsed
-  );
+function play(){
+  if(!D||!D.n||building) return;
+  if(S.done){ restart(); return; }
+  S.playing=true; S.started=true; S.lastTs=null;
+  if(rafId===null) rafId=requestAnimationFrame(tick);
+  controls();
 }
-
-function start(){
-
-  if(rafId!==null){
-    cancelAnimationFrame(rafId);
-  }
-
-  rafId=null;
-
+function pause(){
+  if(!S||!S.playing) return;
+  S.playing=false; stopTimer();
+  draw(true); controls();
+}
+function restart(){
+  if(!D||!D.n) return;
+  stopTimer();
   S=freshState();
-
-  setPlaybackDurations();
-
-  legends();
-
-  Promise.all([
-
-    Plotly.newPlot(
-      "mc-plot",
-      [],
-      LAYOUT(),
-      CFG
-    ),
-
-    Plotly.newPlot(
-      "ms-plot",
-      [],
-      LAYOUT(),
-      CFG
-    )
-
-  ]).then(()=>{
-
-    PM=makePanel("mc");
-    PS=makePanel("ms");
-
-    fitPanel(PM);
-    fitPanel(PS);
-
-    paintTop(PM);
-    paintTop(PS);
-
-    paintStats();
-    setHeight();
-
-    if(D.n>0){
-
-      S.playing=true;
-
-      rafId=requestAnimationFrame(tick);
-    }
-  });
+  paintStats();
+  buildPanels().then(ok=>{ if(ok) play(); });
+}
+function setSpeed(x){ speed=x; controls(); }
+function setView(v){
+  if(v===view) return;
+  view=v;
+  const wasPlaying=S&&S.playing;
+  stopTimer(); if(S) S.playing=false;
+  buildPanels().then(ok=>{ if(ok&&wasPlaying) play(); });
 }
 
-// --------------------------------------------------
-// 창 크기 변경 시 그래프 다시 그리기
-// --------------------------------------------------
+// ======================================================================
+// timing: measured algorithm time -> playback time (common factor)
+// ======================================================================
+function setPlaybackDurations(){
+  const mcE=Math.max(Number(D.mc.elapsed)||0,1e-6), msE=Math.max(Number(D.ms.elapsed)||0,1e-6);
+  const maxE=Math.max(mcE,msE), total=Math.max(Number(D.seconds)||15,1);
+  mcDuration=Math.max(MIN_DURATION,total*mcE/maxE);
+  msDuration=Math.max(MIN_DURATION,total*msE/maxE);
+}
+function timeNote(){
+  if(!D||!D.n) return "Results appear here after <b>Run Comparison</b>; the controls only replay an already computed run.";
+  const mcE=D.mc.elapsed, msE=D.ms.elapsed, f=D.seconds/Math.max(mcE,msE,1e-9);
+  const clamped=Math.min(mcDuration,msDuration)<=MIN_DURATION+1e-9;
+  return `Measured algorithm time: Plain MC ${fmtMs(mcE)}, MISER ${fmtMs(msE)} `
+    +`(ratio ${(msE/Math.max(mcE,1e-12)).toFixed(2)} : 1). Replay at 1×: `
+    +`${mcDuration.toFixed(2)} s and ${msDuration.toFixed(2)} s — both measured times × ${f.toLocaleString("en-US",{maximumFractionDigits:0})}`
+    +(clamped?` (the faster one is shown for at least ${MIN_DURATION} s)`:"")
+    +`. Samples appear in their real evaluation order, spread evenly over the replay `
+    +`(individual sample timestamps are not recorded).`;
+}
+
+// ======================================================================
+// text: chips, legends, controls
+// ======================================================================
+function chip(k,v){ return `<div title="${k}: ${v}"><span class="k">${k}</span><span class="v">${v}</span></div>`; }
+
+function paintStats(){
+  if(!D||!S) return;
+  const n=D.n, L=D.labels, mcK=S.mcShown, msK=S.msShown;
+  const mcPct=n?100*mcK/n:0, msPct=n?100*msK/n:0;
+  $("mc-state").textContent=!n?"":S.mcDone?"Finished":S.playing?"Sampling…":S.started?"Paused":"Ready";
+  $("ms-state").textContent=!n?"":S.msDone?"Finished":S.playing?"Sampling…":S.started?"Paused":"Ready";
+  $("mc-bar").style.width=mcPct+"%"; $("ms-bar").style.width=msPct+"%";
+
+  // MC: volume × mean of the samples shown so far; final = the algorithm's own value
+  const mcEst=S.mcDone?D.mc.estimate:(mcK?D.volume*S.mcSum/mcK:NaN);
+  // MISER: Σ finished regions + current region (its production samples only);
+  // final = the algorithm's own value. Never the plain mean of shown points.
+  const curPart=S.curCount?S.curArea*S.curSum/S.curCount:0;
+  const covered=S.doneArea+(S.curCount?S.curArea:0);
+  const msEst=S.msDone?D.ms.estimate:(covered>0?S.doneSum+curPart:NaN);
+  const estLabel=done=>done?"Final estimate":"Estimate so far";
+  const msEstLabel=S.msDone?"Final estimate":"Estimate (sampled regions)";
+
+  let mc=chip("Samples",`${fmtInt(mcK)} / ${fmtInt(n)}`)+chip("Progress",mcPct.toFixed(1)+"%");
+  let ms=chip("Samples",`${fmtInt(msK)} / ${fmtInt(n)}`)+chip("Progress",msPct.toFixed(1)+"%");
+  if(D.binary){
+    mc+=chip(L.one,fmtInt(S.mcOnes))+chip(L.zero,fmtInt(mcK-S.mcOnes));
+    ms+=chip(L.one,fmtInt(S.msOnes))+chip(L.zero,fmtInt(msK-S.msOnes));
+  }else{
+    mc+=chip("Mean f so far",fmt(mcK?S.mcSum/mcK:NaN,5));
+  }
+  mc+=chip(estLabel(S.mcDone),fmt(mcEst))+chip("Reference",fmt(D.reference))
+     +chip("Algorithm time",n?fmtMs(D.mc.elapsed):"—");
+  ms+=chip(L.pilot+"s",fmtInt(S.msPilot))+chip(msEstLabel,fmt(msEst))
+     +chip("Depth",`${S.depth} (max ${S.maxDepth})`)
+     +chip("Algorithm time",n?fmtMs(D.ms.elapsed):"—");
+  $("mc-chips").innerHTML=mc; $("ms-chips").innerHTML=ms;
+
+  const total=Math.max(mcDuration,msDuration), t=Math.min(S.clock,total);
+  const pct=n?100*Math.min(1,t/total):0;
+  $("prog-bar").style.width=pct+"%";
+  $("prog-txt").textContent=n?`Replay ${pct.toFixed(0)}% · ${t.toFixed(1)} / ${total.toFixed(1)} s at 1×`:"No run yet";
+}
+
+const crossSvg=c=>`<svg width="10" height="10"><path d="M1.5 1.5L8.5 8.5M1.5 8.5L8.5 1.5" stroke="${c}" stroke-width="1.6"/></svg>`;
+const item=(cls,color,label)=>`<span><i class="${cls}" style="${cls==="dot"?"background":"border-top-color"}:${color}"></i>${label}</span>`;
+function legendFor(key){
+  const L=D.labels; let h="";
+  if(D.binary){
+    h+=item("dot",BINARY[key],L.one)+item("dot",BINARY.zero,L.zero);
+  }else{
+    const [lo,hi]=D.vrange;
+    h+=`<span>${L.value} ${fmt(lo,2)}<i class="grad" style="background:linear-gradient(90deg,${COLORSCALE.map(s=>s[1]).join(",")})"></i>${fmt(hi,2)}</span>`;
+  }
+  h+=item("dot","#6b7280",L.production);
+  if(key==="ms") h+=`<span>${crossSvg("#374151")}${L.pilot}</span>`;
+  if(D.overlay&&currentMode()==="2d") h+=item("line",C.overlay,D.binary?"Boundary":"Reference guide (2σ)");
+  if(key==="ms"){
+    h+=item("line",C.split,"MISER split");
+    if(currentMode()==="2d") h+=item("line",C.current,"Current region");
+  }
+  return h;
+}
+function legends(){
+  if(!D) return;
+  $("mc-legend").innerHTML=legendFor("mc"); $("ms-legend").innerHTML=legendFor("ms");
+}
+
+function controls(){
+  const has=!!(D&&D.n), playing=!!(S&&S.playing), done=!!(S&&S.done), started=!!(S&&S.started);
+  const bp=$("btn-play");
+  bp.disabled=!has||building;
+  bp.textContent=playing?"⏸ Pause":done?"▶ Replay":started?"▶ Resume":"▶ Play";
+  $("btn-restart").disabled=!has||building;
+  document.querySelectorAll("[data-speed]").forEach(b=>b.classList.toggle("on",Number(b.dataset.speed)===speed));
+  const can3d=!!(D&&D.surface);
+  $("grp-view").classList.toggle("hidden",!can3d);
+  document.querySelectorAll("[data-view]").forEach(b=>{ b.classList.toggle("on",b.dataset.view===currentMode()); b.disabled=building; });
+  $("btn-cam").classList.toggle("hidden",currentMode()!=="3d");
+  $("lbl-sync").classList.toggle("hidden",currentMode()!=="3d");
+  $("time-note").innerHTML=timeNote();
+}
+
+// listeners are attached exactly once (not per run)
+$("btn-play").addEventListener("click",()=>{ if(S&&S.playing) pause(); else play(); });
+$("btn-restart").addEventListener("click",restart);
+document.querySelectorAll("[data-speed]").forEach(b=>b.addEventListener("click",()=>setSpeed(Number(b.dataset.speed))));
+document.querySelectorAll("[data-view]").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.view)));
+$("btn-cam").addEventListener("click",()=>{
+  for(const P of [PM,PS]) if(P&&P.mode==="3d") Plotly.relayout(P.gd,{"scene.camera":CAM_DEFAULT});
+});
+
+// ======================================================================
+// new run
+// ======================================================================
+function start(){
+  stopTimer();
+  S=freshState();
+  if(!D.surface) view="2d";
+  setPlaybackDurations();
+  legends(); controls(); paintStats();
+  buildPanels().then(ok=>{ if(ok&&D.n>0) play(); });
+}
 
 let resizeTimer=null;
-
 window.addEventListener("resize",()=>{
-
   clearTimeout(resizeTimer);
-
   resizeTimer=setTimeout(()=>{
-
-    if(!D||!PM)return;
-
-    Promise.all([
-
-      Plotly.Plots.resize("mc-plot"),
-      Plotly.Plots.resize("ms-plot")
-
-    ]).then(()=>{
-
-      for(const P of [PM,PS]){
-
-        fitPanel(P);
-
-        Object.values(P.layers).forEach(clearLayer);
-      }
-
-      // 각각의 진행량에 맞춰 점을 다시 그림
-      paintPoints(
-        PM,
-        D.mc,
-        0,
-        S.mcShown
-      );
-
-      paintPoints(
-        PS,
-        D.ms,
-        0,
-        S.msShown
-      );
-
-      paintSplits(0,S.splitPtr);
-
-      paintTop(PM);
-      paintTop(PS);
-
-      setHeight();
-    });
-
+    if(!D||!PM||currentMode()!=="2d") return;   // 3-D plots resize themselves
+    const wasPlaying=S&&S.playing; stopTimer(); if(S) S.playing=false;
+    buildPanels().then(ok=>{ if(ok&&wasPlaying) play(); });
   },150);
 });
 
-// 외부에서 확인할 수 있는 현재 상태
+// state for tests / debugging
 window.__liveState=()=>S&&({
-
-  mcShown:S.mcShown,
-  msShown:S.msShown,
-
-  mcDone:S.mcDone,
-  msDone:S.msDone,
-
-  done:S.done,
-  playing:S.playing,
-
-  splits:S.splitPtr,
-  leavesDone:S.leavesDone,
-  nodes:S.nodePtr,
-
-  depth:S.depth,
-
-  runId:D.run_id,
-  n:D.n,
-
-  mcDuration,
-  msDuration
+  clock:S.clock, speed, view:currentMode(), building,
+  mcShown:S.mcShown, msShown:S.msShown, mcDone:S.mcDone, msDone:S.msDone,
+  done:S.done, playing:S.playing, started:S.started,
+  splits:S.splitPtr, leavesDone:S.leavesDone, nodes:S.nodePtr, depth:S.depth,
+  msPilot:S.msPilot,
+  drawn:PM&&PS?{mc:PM.drawn,ms:PS.drawn,splits:PS.splitsDrawn}:null,
+  flushing:!!(PM&&PS&&(PM.flushing||PS.flushing||PM.pendingForce||PS.pendingForce)),
+  runId:D.run_id, n:D.n, reportedRun, mcDuration, msDuration
 });
 
-// Streamlit 데이터 수신
 window.addEventListener("message",event=>{
-
-  if(
-    !event.data ||
-    event.data.type!=="streamlit:render"
-  )return;
-
+  if(!event.data||event.data.type!=="streamlit:render") return;
   const P=event.data.args.payload;
-
-  if(!P)return;
-
-  if(D&&D.run_id===P.run_id){
-
-    setHeight();
-    return;
-  }
-
+  if(!P) return;
+  if(D&&D.run_id===P.run_id){ setHeight(); return; }   // rerun with the same run
+  if(D&&P.run_id<D.run_id&&P.run_id!==0) return;        // stale payload
   D=P;
-
   start();
 });
 
-send("streamlit:componentReady",{
-  apiVersion:1
-});
-
+send("streamlit:componentReady",{apiVersion:1});
 setHeight();
 </script>
 </body>
