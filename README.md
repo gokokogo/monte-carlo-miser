@@ -62,7 +62,7 @@ All scenarios live in `scenarios.py` and integrate over the unit square [0, 1]²
 | Circle area (`circle`) | 1 inside the circle at (0.70, 0.30), r = 0.15, else 0 | circle (0/1) | πr² = 0.0706858 |
 | Joint default of two firms (`joint_default`) | 1 if both firms default (PD = 2 %, ρ = 0.30, Gaussian copula) | binary region (0/1) | 1-D quadrature, 0.0016644 |
 | Interference fringes (`interference`) | 1 + cos(100(x + y)) | continuous | analytic, 1.0000237 |
-| Starlight on a sensor (`peak`) | exp(−((x−0.4)² + (y−0.4)²) / (2·0.03²)) | continuous, 3-D view | erf product over [0,1]², 0.0056549 |
+| Gaussian peak: starlight on a sensor (`peak`) | exp(−((x−0.4)² + (y−0.4)²) / (2·0.03²)) | continuous, 3-D view | erf product over [0,1]², 0.0056549 |
 
 Each scenario's `kind` decides the wording in one place (`experiments.LABELS`):
 circle → *Inside / Outside circle*, other 0/1 regions → *Inside / Outside
