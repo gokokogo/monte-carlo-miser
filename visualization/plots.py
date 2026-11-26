@@ -114,7 +114,7 @@ def sampling_figure_1d(integrand, bounds, result, algo, max_points, y_range,
     return fig
 
 
-# ---------------------------------------------------------------- sampling 2D
+# ---------------------------------------------------------------- 2D overlay
 
 def _circle(circle):
     """Return circle coordinates, or None when a scenario has no circle."""
@@ -127,81 +127,6 @@ def _circle(circle):
     return cx + r * np.cos(theta), cy + r * np.sin(theta)
 
 
-def _split_lines(splits):
-    lx, ly = [], []
-    for ev in splits:
-        box = ev["box"]
-        if ev["axis"] == 0:
-            lx += [ev["midpoint"], ev["midpoint"], None]
-            ly += [box[1][0], box[1][1], None]
-        else:
-            lx += [box[0][0], box[0][1], None]
-            ly += [ev["midpoint"], ev["midpoint"], None]
-    return lx, ly
-
-
-def sampling_figure_2d(result, algo, max_points, circle, area_mode=False):
-    color = ALGO_COLORS[algo]
-    pts = result["points"]
-    idx = display_subset(len(pts), max_points)
-    kinds = result.get("kinds")
-    fig = go.Figure()
-
-    if area_mode:
-        # Indicator integrand: colour each real sample by inside / outside.
-        inside = result["values"][idx] > 0.5
-        sel_kind = kinds[idx] if kinds is not None else np.ones(len(idx), int)
-        for mask, name, c in ((inside & (sel_kind == 1), "Inside circle", color),
-                              (~inside & (sel_kind == 1), "Outside circle", "#b0b0b0")):
-            fig.add_trace(go.Scattergl(
-                x=pts[idx[mask], 0], y=pts[idx[mask], 1], mode="markers",
-                name=name, marker=dict(size=4, color=c, opacity=0.55)))
-        if kinds is not None:
-            sel = idx[sel_kind == 0]
-            fig.add_trace(go.Scattergl(
-                x=pts[sel, 0], y=pts[sel, 1], mode="markers", name="Pilot samples",
-                marker=dict(size=6, color=MISER_PILOT_COLOR, opacity=0.6,
-                            symbol="x")))
-    elif kinds is None:
-        fig.add_trace(go.Scattergl(
-            x=pts[idx, 0], y=pts[idx, 1], mode="markers", name="Samples",
-            marker=dict(size=4, color=color, opacity=0.5),
-        ))
-    if kinds is not None and not area_mode:
-        k = kinds[idx]
-        for kind, name, c in ((1, "Production samples", color),
-                              (0, "Pilot samples", MISER_PILOT_COLOR)):
-            sel = idx[k == kind]
-            fig.add_trace(go.Scattergl(
-                x=pts[sel, 0], y=pts[sel, 1], mode="markers", name=name,
-                marker=dict(size=4 if kind else 6, color=c,
-                            opacity=0.5 if kind else 0.85,
-                            symbol="circle" if kind else "x"),
-            ))
-    if kinds is not None:
-        lx, ly = _split_lines(result["splits"])
-        fig.add_trace(go.Scatter(
-            x=lx, y=ly, mode="lines", name="Split boundaries",
-            line=dict(color="#a0522d", width=1.4), hoverinfo="skip",
-        ))
-
-    circle_xy = _circle(circle)
-    if circle_xy is not None:
-        cx, cy = circle_xy
-        fig.add_trace(go.Scatter(
-            x=cx, y=cy, mode="lines",
-            name="Circle" if area_mode else "Reference boundary",
-            line=dict(color=CURVE_COLOR, width=2), hoverinfo="skip",
-        ))
-    fig.update_xaxes(range=[0, 1], title_text="x", constrain="domain")
-    fig.update_yaxes(range=[0, 1], title_text="y", scaleanchor="x",
-                     constrain="domain")
-    fig.update_layout(template=TEMPLATE, height=560,
-                      margin=dict(l=50, r=20, t=40, b=40),
-                      legend=dict(orientation="h", y=1.08, x=0))
-    return fig
-
-
 # ---------------------------------------------------------------- partitioning
 
 def _hover(nd):
@@ -212,40 +137,7 @@ def _hover(nd):
             f"Pilot variance estimate: {pv}<br>Status: {status}")
 
 
-def partition_figure_1d(integrand, bounds, regions, max_density, f_range=None):
-    """Bars = regions at the selected depth; height = evaluations per unit length."""
-    a, b = bounds[0]
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-    lo = np.array([r["box"][0][0] for r in regions])
-    hi = np.array([r["box"][0][1] for r in regions])
-    counts = np.array([r["count"] for r in regions])
-    dens = counts / (hi - lo)
-    fig.add_trace(go.Bar(
-        x=(lo + hi) / 2, y=dens, width=hi - lo,
-        marker=dict(color=counts, colorscale="Oranges", cmin=0,
-                    cmax=max(counts.max(), 1),
-                    line=dict(color="#7f3f00", width=1.2),
-                    colorbar=dict(title="Allocated<br>evaluations", x=1.08)),
-        hovertext=[_hover(r) for r in regions], hoverinfo="text",
-        text=[f"{c:,}" for c in counts] if len(regions) <= 16 else None,
-        textposition="inside", name="Region",
-    ), secondary_y=False)
-    xs = np.linspace(a, b, 400)
-    fig.add_trace(go.Scatter(x=xs, y=integrand.scalar(xs), mode="lines",
-                             name="f(x)", line=dict(color=CURVE_COLOR, width=2)),
-                  secondary_y=True)
-    fig.update_xaxes(range=[a, b], title_text="x")
-    fig.update_yaxes(title_text="Evaluations per unit length",
-                     range=[0, max_density * 1.08], secondary_y=False)
-    fig.update_yaxes(title_text="f(x)", secondary_y=True, showgrid=False,
-                     range=f_range)
-    fig.update_layout(template=TEMPLATE, height=460, bargap=0,
-                      margin=dict(l=50, r=20, t=30, b=40),
-                      legend=dict(orientation="h", y=1.1, x=0))
-    return fig
-
-
-def partition_figure_2d(regions, max_density, circle):
+def partition_figure_2d(regions, max_density, circle, overlay_name="Circle boundary"):
     fig = go.Figure()
     for r in regions:
         (x0, x1), (y0, y1) = r["box"]
@@ -264,7 +156,7 @@ def partition_figure_2d(regions, max_density, circle):
     if circle_xy is not None:
         cx, cy = circle_xy
         fig.add_trace(go.Scatter(
-            x=cx, y=cy, mode="lines", name="Circle boundary",
+            x=cx, y=cy, mode="lines", name=overlay_name,
             line=dict(color=CURVE_COLOR, width=2, dash="dash"),
             hoverinfo="skip",
         ))

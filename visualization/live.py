@@ -6,11 +6,21 @@ Supports:
 - Continuous integrands (e.g. interference, Gaussian peak): points are coloured
   by their actual function values.
 - Optional geometric overlay, such as the circle boundary or Gaussian 2-sigma guide.
+- MISER pilot samples (kind 0) vs. production samples (kind 1) by marker shape.
+- Play / pause / restart / speed and a 2-D / 3-D view switch, all client-side
+  (no Streamlit rerun, the algorithms are never re-executed).
 
-The existing call shape remains compatible:
     payload = build_payload(run_id, integrand, mc, ms, reference)
-Optional metadata can be supplied as keyword arguments:
-    build_payload(..., overlay=(cx, cy, r), binary=False, label="...")
+
+``integrand`` is an experiments.Integrand: its ``circle`` (overlay),
+``area_mode`` (0/1 colouring), ``value_kind`` (labels) and ``view3d`` (surface)
+fields describe how the scenario is drawn.
+
+Timing: each algorithm's playback length at 1x is
+PLAYBACK_SECONDS * elapsed_i / max(elapsed_mc, elapsed_ms), i.e. the measured
+algorithm times scaled by one common factor. Samples are shown in their real
+evaluation order, spread evenly over that length (per-sample timestamps are
+not recorded).
 """
 
 import pathlib
@@ -19,6 +29,8 @@ import shutil
 import numpy as np
 import plotly
 import streamlit.components.v1 as components
+
+from visualization.surface import surface_grid
 
 _COMPONENT_DIR = pathlib.Path(__file__).parent / "live_component"
 PLAYBACK_SECONDS = 15
@@ -43,57 +55,37 @@ def _r(a, digits=6):
 
 
 def _empty_algo():
-    return {
-        "x": [], "y": [], "v": [],
-        "elapsed": 0.0, "estimate": 0.0,
-        "value_min": 0.0, "value_max": 1.0,
-    }
+    return {"x": [], "y": [], "v": [], "elapsed": 0.0, "estimate": 0.0}
 
 
-def _metadata(integrand, mc_values, overlay=None, binary=None, label=None):
-    """Read optional scenario metadata without requiring a particular class."""
-    meta = integrand if isinstance(integrand, dict) else {}
-    if overlay is None:
-        overlay = meta.get("overlay", getattr(integrand, "overlay", None))
-    if overlay is None:
-        overlay = getattr(integrand, "circle", None)
-
-    if binary is None:
-        binary = meta.get("binary", getattr(integrand, "binary", None))
-    if binary is None:
-        vals = np.asarray(mc_values, dtype=float)
-        binary = bool(vals.size == 0 or np.all(np.isclose(vals, 0) | np.isclose(vals, 1)))
-
-    if label is None:
-        label = meta.get("label", getattr(integrand, "label", "Integrand"))
-
-    return overlay, bool(binary), str(label)
+def _overlay(integrand):
+    return list(integrand.circle) if integrand.circle is not None else None
 
 
-def blank_payload(circle=None, reference=0.0, binary=True, label="Integrand"):
-    """Idle state. The overlay is optional; no circle is assumed."""
+def blank_payload(integrand, reference):
+    """Idle state before the first run (empty plots, the scenario's labels)."""
+    from experiments import labels_for  # local import: experiments -> miser only
     ms = _empty_algo()
     ms.update(kind=[], leaves=[], splits=[], nodes=[])
-    overlay = list(circle) if circle is not None else None
     return {
-        "run_id": 0, "n": 0, "overlay": overlay,
-        "binary": bool(binary), "label": label, "reference": reference,
+        "run_id": 0, "n": 0, "overlay": _overlay(integrand),
+        "binary": bool(integrand.area_mode), "reference": float(reference),
+        "labels": labels_for(integrand),
+        "volume": 1.0, "bounds": [[0.0, 1.0], [0.0, 1.0]],
+        "vrange": [0.0, 1.0], "surface": None,
         "seconds": PLAYBACK_SECONDS,
         "mc": _empty_algo(), "ms": ms,
     }
 
 
-def build_payload(run_id, integrand, mc, ms, reference,
-                  overlay=None, binary=None, label=None):
+def build_payload(run_id, integrand, mc, ms, reference):
     """Serialize the actual evaluation order returned by the algorithms."""
+    from experiments import labels_for  # local import: experiments -> miser only
     n = int(mc["evaluations"])
     assert n == int(ms["evaluations"]), "MC and MISER evaluation budgets differ"
 
     mc_values = np.asarray(mc["values"], dtype=float)
     ms_values = np.asarray(ms["values"], dtype=float)
-    overlay, binary, label = _metadata(
-        integrand, mc_values, overlay=overlay, binary=binary, label=label
-    )
 
     def algo_payload(result, values):
         values = np.asarray(values, dtype=float)
@@ -104,8 +96,6 @@ def build_payload(run_id, integrand, mc, ms, reference,
             "v": _r(values, digits=8),
             "elapsed": float(result["elapsed"]),
             "estimate": float(result["estimate"]),
-            "value_min": float(np.min(values)) if values.size else 0.0,
-            "value_max": float(np.max(values)) if values.size else 1.0,
         }
 
     leaves = []
@@ -131,13 +121,30 @@ def build_payload(run_id, integrand, mc, ms, reference,
         [int(nd["eval_at_create"]), int(nd["depth"])] for nd in ms["nodes"]
     )
 
+    bounds = [[float(lo), float(hi)] for lo, hi in ms["bounds"]]
+    volume = float(np.prod([hi - lo for lo, hi in bounds]))
+    surface = None
+    if integrand.view3d and len(bounds) == 2:
+        surface = surface_grid(integrand)
+    # One colour / height range shared by both panels (and the 3-D surface).
+    lo_vals = [float(np.min(v)) for v in (mc_values, ms_values) if v.size]
+    hi_vals = [float(np.max(v)) for v in (mc_values, ms_values) if v.size]
+    if surface is not None:
+        lo_vals.append(surface["zmin"])
+        hi_vals.append(surface["zmax"])
+    vrange = [min(lo_vals, default=0.0), max(hi_vals, default=1.0)]
+
     return {
         "run_id": run_id,
         "n": n,
-        "overlay": list(overlay) if overlay is not None else None,
-        "binary": binary,
-        "label": label,
+        "overlay": _overlay(integrand),
+        "binary": bool(integrand.area_mode),
         "reference": float(reference),
+        "labels": labels_for(integrand),
+        "volume": volume,
+        "bounds": bounds,
+        "vrange": vrange,
+        "surface": surface,
         "seconds": PLAYBACK_SECONDS,
         "mc": algo_payload(mc, mc_values),
         "ms": {

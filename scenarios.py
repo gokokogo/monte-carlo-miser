@@ -82,6 +82,8 @@ def interference_exact():
 
 SCENARIOS = {
     "circle": {
+        "kind": "circle",
+        "view3d": False,
         "label": "Circle area (Monte Carlo basics)",
         "func": circle,
         "exact": circle_exact,
@@ -93,6 +95,8 @@ SCENARIOS = {
         ),
     },
     "joint_default": {
+        "kind": "binary",
+        "view3d": False,
         "label": "Joint default of two firms (MISER strength)",
         "func": joint_default,
         "exact": joint_default_exact,
@@ -105,6 +109,8 @@ SCENARIOS = {
         ),
     },
     "interference": {
+        "kind": "continuous",
+        "view3d": False,
         "label": "Interference fringes (limit: spread-out variation)",
         "func": interference,
         "exact": interference_exact,
@@ -117,6 +123,8 @@ SCENARIOS = {
         ),
     },
     "peak": {
+        "kind": "continuous",
+        "view3d": True,
         "label": "Starlight on a sensor (risk: pilot can miss a narrow peak)",
         "func": peak,
         "exact": peak_exact,
@@ -130,9 +138,13 @@ SCENARIOS = {
         ),
     },
 }
+# 화면 표시용 메타데이터 (라벨·범례·3D 여부는 각 항목의 이 두 값으로만 결정):
+#   kind   : "circle" (원 넓이, f = 0/1) | "binary" (일반 0/1 영역) | "continuous"
+#   view3d : 3D 표면 보기 제공 여부 (가우시안 봉우리)
 
 
-# 시나리오별 시연용 Seed·샘플 수 (main = Gausian-Peak, risk = monte-carlo-miser)
+# 시나리오별 시연용 Seed·샘플 수. 앱(app.py)은 "risk" 를 사용한다.
+# "main" 은 통합 전 gaussian-peak 배포본이 쓰던 값으로, 현재 코드에서는 읽지 않는다.
 DEMO = {
     "circle": {"main": {"seed": 114, "n": 10_000}, "risk": {"seed": 146, "n": 10_000}},
     "joint_default": {"main": {"seed": 82, "n": 10_000}, "risk": {"seed": 76, "n": 10_000}},
