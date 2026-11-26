@@ -125,7 +125,7 @@ SCENARIOS = {
     "peak": {
         "kind": "continuous",
         "view3d": True,
-        "label": "Starlight on a sensor (risk: pilot can miss a narrow peak)",
+        "label": "Gaussian peak: starlight on a sensor (risk: pilot can miss a narrow peak)",
         "func": peak,
         "exact": peak_exact,
         "binary": False,
